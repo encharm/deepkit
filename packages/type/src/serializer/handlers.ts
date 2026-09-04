@@ -2695,10 +2695,15 @@ function buildObjectLiteralBody(
                             },
                         );
                     } else {
+                        //Passing a primitive straight through skips the registry,
+                        //which is only safe when nothing is registered for it —
+                        //otherwise a serializer's own handling of, say, a UUID
+                        //string is silently dropped.
                         const isPrimitivePassThrough =
-                            propType.kind === ReflectionKind.string ||
-                            propType.kind === ReflectionKind.number ||
-                            propType.kind === ReflectionKind.boolean;
+                            (propType.kind === ReflectionKind.string ||
+                                propType.kind === ReflectionKind.number ||
+                                propType.kind === ReflectionKind.boolean) &&
+                            !state.registry.has(propType);
 
                         if (isPrimitivePassThrough) {
                             // Use ternary for nullish coalesce: value ?? null
