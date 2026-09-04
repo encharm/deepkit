@@ -60,7 +60,8 @@ export type TypeHook<Ctx extends SerializerBuildContext = SerializerBuildContext
     input: Ref,
     b: Builder,
     ctx: Ctx,
-    next: () => Ref,
+    /** Continue the chain, optionally with a different value than was received. */
+    next: (input?: Ref) => Ref,
 ) => Ref;
 
 /**
@@ -284,7 +285,10 @@ export class HandlerRegistry<Ctx extends SerializerBuildContext = SerializerBuil
      * Executes pre-hooks, handlers, and post-hooks in order.
      */
     build(type: Type, input: Ref, b: Builder, ctx: Ctx): Ref {
-        const executeMain = (): Ref => {
+        //a hook may hand the handlers a different value than it received — a
+        //pre-hook that decodes a wire format, say — so the input threads through
+        //`next(replacement)` rather than being captured once.
+        const executeMain = (input: Ref): Ref => {
             // 1. Check annotation handlers first
             for (const { predicate, handler } of this.annotationHandlers) {
                 if (predicate(type)) {
@@ -326,17 +330,17 @@ export class HandlerRegistry<Ctx extends SerializerBuildContext = SerializerBuil
         for (let i = this.postHooks.length - 1; i >= 0; i--) {
             const hook = this.postHooks[i];
             const prev = execute;
-            execute = () => hook(type, input, b, ctx, prev);
+            execute = (value: Ref) => hook(type, value, b, ctx, next => prev(next ?? value));
         }
 
         // Apply pre-hooks (outermost to innermost)
         for (let i = this.preHooks.length - 1; i >= 0; i--) {
             const hook = this.preHooks[i];
             const prev = execute;
-            execute = () => hook(type, input, b, ctx, prev);
+            execute = (value: Ref) => hook(type, value, b, ctx, next => prev(next ?? value));
         }
 
-        return execute();
+        return execute(input);
     }
 
     /**

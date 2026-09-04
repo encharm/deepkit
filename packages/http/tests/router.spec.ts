@@ -1034,13 +1034,15 @@ test('extend with custom type', async () => {
         return !!typeAnnotation.getType(type, 'stringifyTransport');
     }
 
-    serializer.serializeRegistry.addPostHook((type, state) => {
-        if (!isStringifyTransportType(type)) return;
-        state.addSetter(`JSON.stringify(${state.accessor})`);
+    serializer.serializeRegistry.addPostHook((type, input, b, state, next) => {
+        const result = next();
+        if (!isStringifyTransportType(type)) return result;
+        return b.call(JSON.stringify, result);
     });
-    serializer.deserializeRegistry.addPreHook((type, state) => {
-        if (!isStringifyTransportType(type)) return;
-        state.addSetter(`JSON.parse(${state.accessor})`);
+    serializer.deserializeRegistry.addPreHook((type, input, b, state, next) => {
+        if (!isStringifyTransportType(type)) return next();
+        //decode the wire format before the handlers read the value
+        return next(b.call((v: any) => ('string' === typeof v ? JSON.parse(v) : v), input));
     });
 
     class MyType {

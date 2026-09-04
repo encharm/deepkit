@@ -3025,6 +3025,12 @@ function buildObjectLiteralBody(
  * Deserialize class types - creates actual class instances.
  */
 export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
+    //a reference can be an objectLiteral, which has no classType and no
+    //instance to construct — build it as the plain object it is
+    if (type.kind !== ReflectionKind.class) {
+        return handleObjectLiteral(type, input, b, state);
+    }
+
     const classType = type as TypeClass;
     const classRef = classType.classType;
     const clazz = ReflectionClass.from(classRef);
@@ -3637,20 +3643,18 @@ export const serializeReference: JsonTypeHandler = (type, input, b, state) => {
     const pkName = pkProperty.getName();
     const pkType = pkProperty.type;
 
-    // Check if input is a reference instance
     const result = b.var_<any>(undefined);
 
+    //an unloaded reference reads as the sentinel and an unset one as
+    //null/undefined; neither has a primary key to read
     b.if_(
-        b.call(isReferenceInstance, input),
+        b.or(b.eq(input, b.lit(unpopulatedSymbol)), b.isNullish(input)),
         () => {
-            // It's a reference - get the primary key value
-            const pkValue = input.get(pkName);
-            b.setVar(result, state.build(pkType, pkValue));
+            b.setVar(result, b.lit(undefined));
         },
         () => {
-            // Full object - serialize the primary key
-            const pkValue = input.get(pkName);
-            b.setVar(result, state.build(pkType, pkValue));
+            //loaded or not, a reference is written as its primary key
+            b.setVar(result, state.build(pkType, input.get(pkName)));
         },
     );
 
@@ -3755,7 +3759,9 @@ export const serializeInlineReference: JsonTypeHandler = (type, input, b, state)
     const result = b.var_<any>(undefined);
 
     b.if_(
-        b.eq(input, b.lit(unpopulatedSymbol)),
+        //an unloaded reference reads as the sentinel, and an unset one as
+        //null/undefined; neither can be dereferenced
+        b.or(b.eq(input, b.lit(unpopulatedSymbol)), b.isNullish(input)),
         () => {
             // Not loaded - return undefined (will be omitted)
             b.setVar(result, b.lit(undefined));

@@ -9,6 +9,8 @@
  */
 import { Builder, DeepkitError, Ref, arg, fn, toFastProperties } from '@deepkit/core';
 
+// Initialize the default serializer with handlers
+import { UnpopulatedCheck, typeSettings } from '../core.js';
 import {
     ReflectionKind,
     Type,
@@ -19,7 +21,6 @@ import {
     getTypeObjectLiteralFromTypeClass,
 } from '../reflection/type.js';
 import { ValidationErrorItem } from '../validator.js';
-// Initialize the default serializer with handlers
 import { DynamicPathSegment } from './context.js';
 import { registerDefaultHandlers, registerTypeGuards as registerTypeGuardHandlers } from './handlers.js';
 import { NamingStrategy, defaultNamingStrategy } from './naming.js';
@@ -412,7 +413,7 @@ export function createSerializeFunction(
     // Get direction from registry
     const direction = registry.direction;
 
-    return fn(
+    const compiled = fn(
         arg<any>(),
         arg<SerializationOptions>(),
         (b: Builder, data: Ref<any>, options: Ref<SerializationOptions>) => {
@@ -439,7 +440,21 @@ export function createSerializeFunction(
 
             return state.build(type, data);
         },
-    );
+    ) as SerializeFunction;
+
+    //Reading an unpopulated reference throws by default, which is right for
+    //application code but not while serializing: the handlers expect
+    //`unpopulatedSymbol` and write the foreign key instead. Switch the mode for
+    //the duration of the call and always put it back.
+    return ((data: any, options?: SerializationOptions) => {
+        const previous = typeSettings.unpopulatedCheck;
+        typeSettings.unpopulatedCheck = UnpopulatedCheck.ReturnSymbol;
+        try {
+            return compiled(data, options);
+        } finally {
+            typeSettings.unpopulatedCheck = previous;
+        }
+    }) as SerializeFunction;
 }
 
 /**
