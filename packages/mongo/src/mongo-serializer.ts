@@ -68,6 +68,11 @@ class MongoAnySerializer extends Serializer {
             );
         });
 
+        //BSON has a native Date, so it is stored as one rather than the ISO
+        //string the JSON serializer would produce
+        this.serializeRegistry.registerClass(Date, (type, input) => input);
+        this.deserializeRegistry.registerClass(Date, (type, input) => input);
+
         this.serializeRegistry.register(ReflectionKind.undefined, (type, input, b) => b.lit(null));
         this.deserializeRegistry.register(ReflectionKind.undefined, (type, input, b) => b.lit(undefined));
     }

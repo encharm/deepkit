@@ -186,7 +186,7 @@ test('convertClassQueryToMongo customMapping', () => {
 });
 
 test('failed conversion', () => {
-    expect(() => convertPlainQueryToMongo(Simple, { id: { dif: 1 } as any })).toThrow('Cannot convert [object Object] to number');
+    expect(() => convertPlainQueryToMongo(Simple, { id: { dif: 1 } as any })).toThrow('Cannot convert object {dif: 1} to number');
 });
 
 test('regex', () => {
