@@ -305,6 +305,20 @@ function findTupleRest(tupleType: TypeTuple): { index: number; type?: Type } {
 }
 
 /**
+ * Number of leading tuple members that must be present.
+ *
+ * Optional members (`[a: string, b?: number]`) and a rest element may be
+ * omitted, so a tuple's minimum length stops at the first of those.
+ */
+function requiredTupleLength(tupleType: TypeTuple): number {
+    for (let i = 0; i < tupleType.types.length; i++) {
+        const member = tupleType.types[i];
+        if (member.optional || member.type.kind === ReflectionKind.rest) return i;
+    }
+    return tupleType.types.length;
+}
+
+/**
  * Collect prefixed property names for embedded types.
  */
 function collectPrefixedPropertyNames(embeddedMembers: Type[], prefix: string, state: JsonBuildContext): string[] {
@@ -1222,8 +1236,11 @@ export const guardTuple: JsonTypeHandler = (type, input, b, state) => {
         () => {
             const rest = findTupleRest(tupleType);
             const hasRest = rest.index !== -1;
-            const minLen = hasRest ? rest.index : tupleType.types.length;
-            const exactLen = !hasRest ? tupleType.types.length : undefined;
+            const minLen = requiredTupleLength(tupleType);
+            //optional members may be omitted, so only a tuple with neither a rest
+            //element nor optional members has an exact length
+            const exactLen = !hasRest && minLen === tupleType.types.length ? tupleType.types.length : undefined;
+            const maxLen = hasRest ? undefined : tupleType.types.length;
 
             // Check length
             if (exactLen !== undefined) {
@@ -1258,6 +1275,23 @@ export const guardTuple: JsonTypeHandler = (type, input, b, state) => {
                         );
                     });
                 });
+                if (maxLen !== undefined) {
+                    b.if_(b.gt(input.len(), b.lit(maxLen)), () => {
+                        b.setVar(score, b.lit(0));
+                        b.if_(errorsRef, () => {
+                            b.push(
+                                errorsRef,
+                                b.new_(
+                                    ValidationErrorItem,
+                                    state.pathRef(),
+                                    b.lit('type'),
+                                    b.lit(`Expected tuple of at most ${maxLen} elements`),
+                                    input,
+                                ),
+                            );
+                        });
+                    });
+                }
             }
 
             // Check elements
@@ -1266,8 +1300,16 @@ export const guardTuple: JsonTypeHandler = (type, input, b, state) => {
                 if (elem.type.kind === ReflectionKind.rest) continue;
                 const pathSegment = elem.name ?? String(i);
                 const childState = state.forProperty(pathSegment);
-                const elemScore = childState.build(elem.type, input.at(i));
-                b.if_(b.eq(elemScore, b.lit(0)), () => b.setVar(score, b.lit(0)));
+                const checkElem = () => {
+                    const elemScore = childState.build(elem.type, input.at(i));
+                    b.if_(b.eq(elemScore, b.lit(0)), () => b.setVar(score, b.lit(0)));
+                };
+                //an omitted optional member is valid, so only validate it when present
+                if (elem.optional) {
+                    b.if_(b.gt(input.len(), b.lit(i)), checkElem);
+                } else {
+                    checkElem();
+                }
             }
         },
     );
@@ -1286,10 +1328,14 @@ export const guardTupleFast: JsonTypeHandler = (type, input, b, state) => {
         const hasRest = rest.index !== -1;
         const restIndex = rest.index;
         const restType = rest.type;
-        const exactLen = !hasRest ? tupleType.types.length : undefined;
+        const requiredLen = requiredTupleLength(tupleType);
+        //optional members may be omitted, so only a tuple with neither a rest
+        //element nor optional members has an exact length
+        const exactLen = !hasRest && requiredLen === tupleType.types.length ? tupleType.types.length : undefined;
         // For rest tuples, minimum length is elements before rest + elements after rest
         const afterRestCount = hasRest ? tupleType.types.length - restIndex - 1 : 0;
-        const minLen = hasRest ? restIndex + afterRestCount : tupleType.types.length;
+        const minLen = hasRest ? Math.min(requiredLen, restIndex) + afterRestCount : requiredLen;
+        const maxLen = hasRest ? undefined : tupleType.types.length;
 
         // Check length
         if (exactLen !== undefined) {
@@ -1300,6 +1346,11 @@ export const guardTupleFast: JsonTypeHandler = (type, input, b, state) => {
             b.if_(b.lt(input.len(), b.lit(minLen)), () => {
                 b.setVar(result, b.lit(false));
             });
+            if (maxLen !== undefined) {
+                b.if_(b.gt(input.len(), b.lit(maxLen)), () => {
+                    b.setVar(result, b.lit(false));
+                });
+            }
         }
 
         if (!hasRest) {
@@ -1308,8 +1359,16 @@ export const guardTupleFast: JsonTypeHandler = (type, input, b, state) => {
                 const elem = tupleType.types[i];
                 const pathSegment = elem.name ?? String(i);
                 const childState = state.forProperty(pathSegment);
-                const elemValid = childState.build(elem.type, input.at(i)) as Ref<boolean>;
-                b.if_(b.not(elemValid), () => b.setVar(result, b.lit(false)));
+                const checkElem = () => {
+                    const elemValid = childState.build(elem.type, input.at(i)) as Ref<boolean>;
+                    b.if_(b.not(elemValid), () => b.setVar(result, b.lit(false)));
+                };
+                //an omitted optional member is valid, so only check it when present
+                if (elem.optional) {
+                    b.if_(b.gt(input.len(), b.lit(i)), checkElem);
+                } else {
+                    checkElem();
+                }
             }
         } else {
             // Has rest element - need to handle indices properly
