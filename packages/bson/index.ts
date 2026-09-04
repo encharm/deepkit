@@ -12,7 +12,7 @@
 export { BSONError, CircularReferenceError, TypeNotSerializableError } from './src/errors.js';
 
 // model
-export { ObjectId } from './src/model.js';
+export { ObjectId, ValueWithBSONSerializer } from './src/model.js';
 
 // parser
 export type { ParsedField, ParsedDocument, ParsedArray } from './src/parser.js';

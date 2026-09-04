@@ -57,6 +57,7 @@ import { TypeNumberBrand } from '@deepkit/type-spec';
 
 import { BSONBuildState, PropertyName } from './context.js';
 import { BSONError, CircularReferenceError, TypeNotSerializableError } from './errors.js';
+import { ValueWithBSONSerializer } from './model.js';
 import {
     BSONType,
     BSON_BINARY_SUBTYPE_DEFAULT,
@@ -684,6 +685,12 @@ export function serializeAnyPropertyRuntime(
         return offset + 8;
     }
 
+    // A value wrapped with an explicit type (MongoDB filters/patches declare
+    // `any`, so the type cannot be recovered from the value alone).
+    if (value instanceof ValueWithBSONSerializer) {
+        return serializeWrappedValueRuntime(buffer, view, offset, name, value);
+    }
+
     // Object types
     if (value instanceof Date) {
         buffer[offset++] = BSONType.DATE;
@@ -708,6 +715,68 @@ export function serializeAnyPropertyRuntime(
     buffer[offset++] = BSONType.OBJECT;
     offset = writeName(buffer, offset, name);
     return serializeAnyObjectRuntime(buffer, view, offset, value);
+}
+
+/**
+ * Serialize a {@link ValueWithBSONSerializer} using its declared type.
+ *
+ * The JIT serializers work on documents, so the value is serialized as the
+ * single property of a wrapper document and its encoded bytes — everything
+ * after the property name, which is a fixed `v\0` — are copied out.
+ */
+const wrappedValueSerializers = new WeakMap<Type, (buffer: Uint8Array, view: DataView, data: any) => number>();
+
+function getWrappedValueSerializer(type: Type): (buffer: Uint8Array, view: DataView, data: any) => number {
+    let serialize = wrappedValueSerializers.get(type);
+    if (serialize) return serialize;
+
+    const wrapperType = {
+        kind: ReflectionKind.objectLiteral,
+        types: [
+            {
+                kind: ReflectionKind.propertySignature,
+                name: 'v',
+                parent: undefined as any,
+                type,
+            },
+        ],
+    } as TypeObjectLiteral;
+
+    //build the raw JIT function rather than going through getBSONSerializer,
+    //whose wrapper writes into the shared buffer we are already building into
+    const ctx = new BSONBuildState();
+    const fn = buildObjectSerializer(wrapperType, ctx);
+    serialize = (buffer, view, data) => fn(buffer, view, 0, data);
+    wrappedValueSerializers.set(type, serialize);
+    return serialize;
+}
+
+/** Scratch buffer for wrapped values, kept separate from the shared one. */
+let wrappedBuffer = new Uint8Array(64 * 1024);
+let wrappedView = new DataView(wrappedBuffer.buffer);
+
+function serializeWrappedValueRuntime(
+    buffer: Uint8Array,
+    view: DataView,
+    offset: number,
+    name: string | number,
+    wrapped: ValueWithBSONSerializer,
+): number {
+    const wrapperSize = getWrappedValueSerializer(wrapped.type)(wrappedBuffer, wrappedView, { v: wrapped.value });
+
+    const valueStart = 4 + 1 + 2; //size + type byte + 'v' + terminator
+    const valueEnd = wrapperSize - 1; //document terminator
+
+    if (valueEnd <= valueStart) {
+        //the property was skipped entirely (undefined), so write null
+        buffer[offset++] = BSONType.NULL;
+        return writeName(buffer, offset, name);
+    }
+
+    buffer[offset++] = wrappedBuffer[4]; //the value's BSON type byte
+    offset = writeName(buffer, offset, name);
+    buffer.set(wrappedBuffer.subarray(valueStart, valueEnd), offset);
+    return offset + (valueEnd - valueStart);
 }
 
 /**

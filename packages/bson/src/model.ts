@@ -7,6 +7,7 @@
  *
  * You should have received a copy of the MIT License along with this program.
  */
+import { Type } from '@deepkit/type';
 
 let PROCESS_UNIQUE: Uint8Array | undefined = undefined;
 
@@ -109,4 +110,19 @@ export class ObjectId {
             hexTable[inc & 0xff]
         );
     }
+}
+
+/**
+ * Wraps a value together with the type BSON should serialize it as.
+ *
+ * Where a document declares `any` — MongoDB filters and patches do, since
+ * spelling out the type would be impractical — the runtime serializer can only
+ * infer BSON types from the JavaScript value, which loses the distinction
+ * between a plain string and a MongoId or UUID. Wrapping restores it.
+ */
+export class ValueWithBSONSerializer {
+    constructor(
+        public value: any,
+        public type: Type,
+    ) {}
 }
