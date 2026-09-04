@@ -9,7 +9,14 @@
  */
 import sift from 'sift';
 
-import { Changes, PrimaryKeyFields, ReflectionClass, TemplateRegistry, getSerializeFunction } from '@deepkit/type';
+import {
+    Changes,
+    HandlerRegistry,
+    JsonBuildContext,
+    PrimaryKeyFields,
+    ReflectionClass,
+    getSerializeFunction,
+} from '@deepkit/type';
 
 import { getInstanceStateFromItem } from './identity-map.js';
 import { FilterQuery } from './query.js';
@@ -61,7 +68,7 @@ export function buildChangesFromInstance<T extends object>(item: T): Changes<T> 
  */
 export function primaryKeyObjectConverter(
     classSchema: ReflectionClass<any>,
-    templateRegistry: TemplateRegistry,
+    templateRegistry: HandlerRegistry<JsonBuildContext>,
 ): (data: any) => PrimaryKeyFields<any> {
     const primary = classSchema.getPrimary();
     const primaryKeyConverted = getSerializeFunction(primary.property, templateRegistry);
