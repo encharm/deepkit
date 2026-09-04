@@ -1800,7 +1800,20 @@ interface StringifyTypeOptions {
     stringify?: (type: Type) => string | undefined;
 }
 
-let stringifyTypeId: number = 1;
+/**
+ * Allocates ids for `jit.visitStack`, the shared marker used to detect
+ * recursion while walking a type graph.
+ *
+ * `stringifyType` here and `visit` in ./reflection.ts both stamp that field, so
+ * they must draw from one counter — two counters hand out the same id and a
+ * later walk mistakes another walk's marker for its own, reporting recursion
+ * where there is none.
+ */
+let visitStackId: number = 1;
+
+export function nextVisitStackId(): number {
+    return visitStackId++;
+}
 
 export function stringifyType(type: Type, stateIn: Partial<StringifyTypeOptions> = {}): string {
     const state: StringifyTypeOptions = {
@@ -1815,7 +1828,7 @@ export function stringifyType(type: Type, stateIn: Partial<StringifyTypeOptions>
     };
     const stack: { type?: Type; defaultValue?: any; before?: string; after?: string; depth?: number }[] = [];
     stack.push({ type, defaultValue: state.defaultValues, depth: 1 });
-    const stackId: number = stringifyTypeId++;
+    const stackId: number = nextVisitStackId();
     const result: string[] = [];
 
     while (stack.length) {

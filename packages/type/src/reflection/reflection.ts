@@ -68,6 +68,7 @@ import {
     hasMember,
     isType,
     memberNameToString,
+    nextVisitStackId,
     stringifyResolvedType,
     stringifyType,
 } from './type.js';
@@ -211,8 +212,6 @@ export function hasCircularReference(type: Type) {
     return (jit.hasCircularReference = hasCircular);
 }
 
-let visitStackId: number = 0;
-
 function extendPath(path: string, member: Type): string {
     let name: string | number | symbol | undefined = '';
     if ('name' in member) {
@@ -226,7 +225,7 @@ function extendPath(path: string, member: Type): string {
 export function visit(type: Type, visitor: (type: Type, path: string) => false | void, onCircular?: () => void): void {
     const stack: { type: Type; depth: number; path: string }[] = [];
     stack.push({ type, depth: 0, path: '' });
-    const stackId: number = visitStackId++;
+    const stackId: number = nextVisitStackId();
 
     while (stack.length) {
         const entry = stack.shift();
