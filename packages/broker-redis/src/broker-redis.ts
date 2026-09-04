@@ -1,4 +1,4 @@
-import Redis, { Callback, RedisOptions } from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 
 import {
     BrokerAdapterBus,
@@ -10,10 +10,12 @@ import {
     BrokerTimeOptionsResolved,
     Release,
 } from '@deepkit/broker';
-import { AutoBuffer, getBsonEncoder } from '@deepkit/bson';
+import { getBSONEncoder } from '@deepkit/bson';
 import { arrayRemoveItem, fixAsyncOperation } from '@deepkit/core';
 import { Logger } from '@deepkit/logger';
 import { Type } from '@deepkit/type';
+
+type BrokerMessageCallback = (message: any) => void;
 
 export type RedisBrokerAdapterOptions = RedisOptions & {
     prefix?: string; // optional prefix for all keys
@@ -25,8 +27,10 @@ export class RedisBrokerAdapter
     protected subscriptions = new Map<
         string,
         {
-            handler: (message: Buffer, callbacks: Callback[]) => void;
-            callbacks: Callback[];
+            //these are BrokerAdapter message consumers, not ioredis Callbacks
+            //(which are (err, result) style and never called that way here)
+            handler: (message: Buffer, callbacks: BrokerMessageCallback[]) => void;
+            callbacks: BrokerMessageCallback[];
         }
     >();
 
@@ -97,12 +101,10 @@ export class RedisBrokerAdapter
         this.redisSubscribe.disconnect();
     }
 
-    private autoBuffer = new AutoBuffer();
-
     private serialize(message: any, type: Type): Uint8Array {
-        const encoder = getBsonEncoder(type);
-        this.autoBuffer.apply(encoder.encode, message);
-        return this.autoBuffer.buffer;
+        //encode() already returns an owned copy, so the AutoBuffer that used to
+        //back this is no longer needed
+        return getBSONEncoder(type).encode(message);
     }
 
     async publish(name: string, message: any, type: Type): Promise<void> {
@@ -114,15 +116,15 @@ export class RedisBrokerAdapter
         const channelName = `${this.prefix}${name}`;
         let handler = this.subscriptions.get(channelName);
         if (!handler) {
-            const encoder = getBsonEncoder(type);
+            const encoder = getBSONEncoder(type);
             handler = {
-                handler: (message: Buffer, callbacks: Callback[]) => {
+                handler: (message: Buffer, callbacks: BrokerMessageCallback[]) => {
                     try {
-                        const deserialized = encoder.decode(message, 0);
+                        const deserialized = encoder.decode(message);
                         for (const callback of callbacks) {
                             callback(deserialized);
                         }
-                    } catch (error) {
+                    } catch (error: any) {
                         this.logger.error(`Error handling message for channel ${channelName}`, error);
                     }
                 },
@@ -148,7 +150,7 @@ export class RedisBrokerAdapter
 
     async get(key: string, type: Type): Promise<any> {
         const fullKey = `${this.prefix}${key}`;
-        const encoder = getBsonEncoder(type);
+        const encoder = getBSONEncoder(type);
         const data = await this.redis.getBuffer(fullKey);
         if (!data) return undefined;
         return encoder.decode(data);
@@ -166,7 +168,7 @@ export class RedisBrokerAdapter
 
     async set(key: string, value: any, options: BrokerKeyValueOptionsResolved, type: Type): Promise<any> {
         const fullKey = `${this.prefix}${key}`;
-        const encoder = getBsonEncoder(type);
+        const encoder = getBSONEncoder(type);
         const data = encoder.encode(value);
         if (options.ttl) {
             await this.redis.set(fullKey, Buffer.from(data), 'PX', options.ttl);
@@ -177,7 +179,7 @@ export class RedisBrokerAdapter
 
     async getCache(key: string, type: Type): Promise<{ value: any; ttl: number } | undefined> {
         const fullKey = `${this.prefix}${key}`;
-        const encoder = getBsonEncoder(type);
+        const encoder = getBSONEncoder(type);
         const data = await fixAsyncOperation(this.redis.getBuffer(fullKey));
         if (!data) return undefined;
 
@@ -190,7 +192,7 @@ export class RedisBrokerAdapter
 
     async setCache(key: string, value: any, options: BrokerCacheItemOptionsResolved, type: Type): Promise<void> {
         const fullKey = `${this.prefix}${key}`;
-        const encoder = getBsonEncoder(type);
+        const encoder = getBSONEncoder(type);
         const data = encoder.encode(value);
         if (options.ttl) {
             await fixAsyncOperation(this.redis.set(fullKey, Buffer.from(data), 'PX', options.ttl));

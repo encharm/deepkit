@@ -1,4 +1,4 @@
-import { deserializeBSON, getBsonEncoder, serializeBSON } from '@deepkit/bson';
+import { deserializeBSON, getBSONEncoder, serializeBSON } from '@deepkit/bson';
 import { DeepkitError, arrayRemoveItem, formatError } from '@deepkit/core';
 import {
     ClientTransportAdapter,
@@ -153,7 +153,7 @@ export class BrokerDeepkitAdapter implements BrokerAdapter {
     }
 
     async setCache(key: string, value: any, options: BrokerCacheItemOptionsResolved, type: Type): Promise<void> {
-        const encoder = getBsonEncoder(type);
+        const encoder = getBSONEncoder(type);
         const v = encoder.encode(value);
         await this.pool
             .getConnection('cache/' + key)
@@ -186,12 +186,12 @@ export class BrokerDeepkitAdapter implements BrokerAdapter {
             .sendMessage<brokerGetCache>(BrokerType.GetCache, { n: key })
             .firstThenClose<brokerResponseGetCache>(BrokerType.ResponseGetCache);
 
-        const encoder = getBsonEncoder(type);
-        return first.v && first.ttl !== undefined ? { value: encoder.decode(first.v, 0), ttl: first.ttl } : undefined;
+        const encoder = getBSONEncoder(type);
+        return first.v && first.ttl !== undefined ? { value: encoder.decode(first.v), ttl: first.ttl } : undefined;
     }
 
     async set(key: string, value: any, options: BrokerKeyValueOptionsResolved, type: Type): Promise<void> {
-        const serializer = getBsonEncoder(type);
+        const serializer = getBSONEncoder(type);
         const v = serializer.encode(value);
         await this.pool
             .getConnection('key/' + key)
@@ -205,8 +205,8 @@ export class BrokerDeepkitAdapter implements BrokerAdapter {
             .sendMessage<brokerGet>(BrokerType.Get, { n: key })
             .firstThenClose<brokerResponseGet>(BrokerType.ResponseGet);
         if (first.v) {
-            const serializer = getBsonEncoder(type);
-            return serializer.decode(first.v, 0);
+            const serializer = getBSONEncoder(type);
+            return serializer.decode(first.v);
         }
     }
 
@@ -265,7 +265,7 @@ export class BrokerDeepkitAdapter implements BrokerAdapter {
     }
 
     async publish(key: string, message: any, type: Type): Promise<void> {
-        const serializer = getBsonEncoder(type);
+        const serializer = getBSONEncoder(type);
         const v = serializer.encode(message);
 
         await this.pool
@@ -287,11 +287,11 @@ export class BrokerDeepkitAdapter implements BrokerAdapter {
         callback: (message: any) => void,
         type: Type,
     ): Promise<Release> {
-        const serializer = getBsonEncoder(type);
+        const serializer = getBSONEncoder(type);
 
         const parsedCallback = (next: Uint8Array) => {
             try {
-                const parsed = serializer.decode(next, 0);
+                const parsed = serializer.decode(next);
                 callback(parsed);
             } catch (error: any) {
                 console.error(`Could not parse channel message ${key}: ${error}`);

@@ -19,11 +19,14 @@ export function snapshotState(state: BrokerState, writer: (v: Uint8Array) => voi
             amount: queue.messages.length,
         };
 
-        const bson = serializeEntry(q);
-        writer(bson);
+        //the serializer returns [sharedBuffer, size]; the buffer is reused across
+        //calls, so each document is copied out before the next serialize
+        const [entryBuffer, entrySize] = serializeEntry(q);
+        writer(entryBuffer.slice(0, entrySize));
 
         for (const message of queue.messages) {
-            writer(serializeMessage(message));
+            const [messageBuffer, messageSize] = serializeMessage(message);
+            writer(messageBuffer.slice(0, messageSize));
         }
     }
 }
