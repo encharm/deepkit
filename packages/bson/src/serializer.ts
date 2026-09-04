@@ -371,6 +371,8 @@ function serializeObjectProperties(
         //a relation that was not joined reads as the sentinel; there is nothing
         //to write for it, and the document must not carry a placeholder
         const isRelation = isReferenceType(propType) || isBackReferenceType(prop) || isBackReferenceType(propType);
+        if (isRelation) ctx.hasRelations = true;
+
         const writeProperty = () => {
             // Check if property is optional (handles both `prop?: T` and `prop: T | undefined`)
             if (isOptional(prop)) {

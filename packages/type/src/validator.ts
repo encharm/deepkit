@@ -51,13 +51,16 @@ export class ValidationErrorItem {
         let messagedCausedBy = '';
         if (this.value !== undefined) {
             //serialise the value and trim to 100 chars max
-            let serialisedValue: string;
+            let serialisedValue: string | undefined;
             try {
                 serialisedValue = JSON.stringify(this.value);
             } catch {
                 // Fallback for circular references or other JSON.stringify failures
-                serialisedValue = stringifyValueWithType(this.value);
+                serialisedValue = undefined;
             }
+            //JSON.stringify returns undefined for a function, symbol or an object
+            //whose toJSON returns undefined, not only when it throws
+            if (serialisedValue === undefined) serialisedValue = stringifyValueWithType(this.value);
             if (serialisedValue.length > 100) serialisedValue = serialisedValue.slice(0, 100) + '...';
             messagedCausedBy = ` caused by value ${serialisedValue}`;
         }

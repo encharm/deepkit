@@ -226,9 +226,13 @@ export class DatabaseSessionRound<ADAPTER extends DatabaseAdapter> {
 
                 for (const item of group.items) {
                     const state = getInstanceState(classState, item);
-                    const errors = validate(item, classState.classSchema.type);
-                    if (errors.length) {
-                        throw new DatabaseValidationError(classState.classSchema, errors);
+                    //a lazy reference carries only its primary key; its other
+                    //properties are not loaded, so there is nothing to validate
+                    if (!isReferenceInstance(item)) {
+                        const errors = validate(item, classState.classSchema.type);
+                        if (errors.length) {
+                            throw new DatabaseValidationError(classState.classSchema, errors);
+                        }
                     }
 
                     if (state.isKnownInDatabase()) {
