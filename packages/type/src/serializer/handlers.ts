@@ -2339,6 +2339,18 @@ export const handleMember: JsonTypeHandler = (type, input, b, state) => {
         return b.getVar(result);
     }
 
+    //a required member that was not given at all is reported as missing rather
+    //than as the wrong type, which says nothing about what went wrong
+    if (state.validation !== undefined && state.collectErrors) {
+        const result = b.var_(b.lit(false));
+        b.if_(
+            b.eq(input, b.lit(undefined)),
+            () => pushTypeErrorWhen(b, state, input, b.lit(true), 'No value given'),
+            () => b.setVar(result, state.build(member.type, input) as Ref<boolean>),
+        );
+        return b.getVar(result);
+    }
+
     return state.build(member.type, input);
 };
 
@@ -3310,7 +3322,7 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                     b.if_(
                         b.not(b.isNullish(propInput)),
                         () => {
-                            b.set(result, propName, state.build(propType, propInput));
+                            b.set(result, propName, state.buildMember(memberType, propType, propInput));
                         },
                         () => {
                             if (isNullable(memberType)) {
@@ -3502,7 +3514,7 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                     b.if_(
                         b.not(b.isNullish(propInput)),
                         () => {
-                            b.set(result, propName, state.build(propType, propInput));
+                            b.set(result, propName, state.buildMember(memberType, propType, propInput));
                         },
                         () => {
                             if (isNullable(memberType)) {
@@ -3555,7 +3567,7 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                 b.if_(
                     b.not(b.isNullish(propInput)),
                     () => {
-                        b.set(result, propName, state.build(propType, propInput));
+                        b.set(result, propName, state.buildMember(memberType, propType, propInput));
                     },
                     () => {
                         if (isNullable(memberType)) {

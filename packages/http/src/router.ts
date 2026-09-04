@@ -23,6 +23,7 @@ import {
     Serializer,
     Type,
     ValidationError,
+    ValidationErrorItem,
     entity,
     serializer,
 } from '@deepkit/type';
@@ -98,14 +99,26 @@ export class UploadedFile {
 
 // Register type guard for UploadedFile - validates that the file was provided by the framework
 serializer.typeGuards.registerClass(UploadedFile, (type, input, b, state) => {
-    // Check if input is an UploadedFile with valid validator symbol
-    return b.and(
-        b.isType(input, 'object'),
-        b.and(
-            b.not(b.isNull(input)),
-            b.call((v: any, sym: symbol) => v.validator === sym, input, b.lit(UploadedFileSymbol)),
+    //only the framework sets this symbol, so a JSON body shaped like a file
+    //cannot pass itself off as one and reach a path on disk
+    const valid = b.var_(
+        b.call(
+            (v: any, sym: symbol) => 'object' === typeof v && v !== null && v.validator === sym,
+            input,
+            b.lit(UploadedFileSymbol),
         ),
     );
+
+    if (state.collectErrors) {
+        b.if_(b.not(b.getVar(valid)), () => {
+            b.push(
+                state.optionsRef.get('errors' as any),
+                b.new_(ValidationErrorItem, state.pathRef(), b.lit('type'), b.lit('Not an uploaded file'), input),
+            );
+        });
+    }
+
+    return b.getVar(valid);
 });
 
 export interface RouteFunctionControllerAction {

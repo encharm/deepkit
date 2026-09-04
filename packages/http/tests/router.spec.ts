@@ -1497,7 +1497,7 @@ test('issue-415: serialize literal types in union', async () => {
     // Invalid value should return validation error
     const invalidResponse = (await httpKernel.request(HttpRequest.GET('/?rotate=555454'))).json;
     expect(invalidResponse.message).toContain('Validation error');
-    expect(invalidResponse.message).toContain('Cannot convert 555454 to 180 | 0');
+    expect(invalidResponse.message).toContain('Cannot convert string \"555454\" to 180 | 0');
 });
 
 test('fetch thrown error instances in listeners', async () => {

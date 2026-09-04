@@ -35,10 +35,9 @@ class MySQLSerializer extends SqlSerializer {
 
         //a UUID column also arrives base64-encoded from `returning` queries, so
         //decode it before the UUID handler inherited from SqlSerializer reads it
-        const uuidHandler = this.deserializeRegistry.getDecorator(isUUIDType);
-        this.deserializeRegistry.prependDecorator(isUUIDType, (type, input, b, state) => {
-            const decoded = b.call(decodeBase64Binary, input);
-            return uuidHandler ? uuidHandler(type, decoded, b, state) : decoded;
+        this.deserializeRegistry.addPreHook((type, input, b, state, next) => {
+            if (!isUUIDType(type)) return next();
+            return next(b.call(decodeBase64Binary, input));
         });
     }
 }

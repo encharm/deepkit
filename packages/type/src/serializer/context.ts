@@ -265,9 +265,15 @@ export abstract class SerializerBuildContext {
      */
     buildMember(member: Type, type: Type, input: Ref): Ref {
         this.parentTypes.push(member);
+        //name the member in the path too, so an error raised anywhere below it
+        //reads `someFile.validator(type): ...` rather than `(type): ...`
+        const name = 'name' in member ? member.name : undefined;
+        const named = name !== undefined && 'symbol' !== typeof name;
+        if (named) this.pathSegments.push(String(name));
         try {
             return this.build(type, input);
         } finally {
+            if (named) this.pathSegments.pop();
             this.parentTypes.pop();
         }
     }
