@@ -70,10 +70,15 @@ function isNumeric(value: string): boolean {
  * Build state for change detector JIT function generation.
  */
 interface ChangeDetectorState {
-    /** Map from type to its cached detector function var */
-    fnCache: Map<Type, VarRef<Function>>;
+    /** Map from type to its built nested detector */
+    detectorCache: Map<Type, Function>;
     /** Types currently being processed (for circular detection) */
     typeStack: Set<Type>;
+    /**
+     * Detectors for self-referencing types, which cannot be built while the
+     * type they belong to is still being built. Filled in once it is.
+     */
+    pendingDetectors: { classSchema: ReflectionClass<any>; holder: { fn?: Function } }[];
 }
 
 /**
@@ -351,26 +356,26 @@ function buildNestedObjectComparator(
                     onChanged();
                 },
                 () => {
-                    // Both exist - use nested change detector
-                    let fnVar = state.fnCache.get(type);
+                    // Both exist - use nested change detector.
+                    //
+                    // The detector is embedded as a literal rather than kept in a
+                    // builder variable: a variable belongs to the branch that
+                    // declared it, so reusing a cached one from another branch reads
+                    // undefined. A holder keeps a self-referencing type callable,
+                    // since its detector does not exist yet while it is being built.
+                    let detector = state.detectorCache.get(type);
 
-                    if (!fnVar) {
-                        // Check for circular reference
+                    if (!detector) {
                         if (state.typeStack.has(type)) {
-                            // Circular reference - use lazy initialization
-                            fnVar = b.var_<Function>(undefined as any);
-                            state.fnCache.set(type, fnVar);
-
-                            // Build the nested detector lazily
-                            const nestedDetector = createJITChangeDetectorForSnapshot(classSchema, state);
-                            b.setVar(fnVar, b.lit(nestedDetector));
+                            const holder: { fn?: Function } = {};
+                            detector = (last: any, current: any, item: any) => holder.fn!(last, current, item);
+                            state.detectorCache.set(type, detector);
+                            state.pendingDetectors.push({ classSchema, holder });
                         } else {
-                            // Not circular - build inline
                             state.typeStack.add(type);
                             try {
-                                const nestedDetector = createJITChangeDetectorForSnapshot(classSchema, state);
-                                fnVar = b.var_<Function>(b.lit(nestedDetector));
-                                state.fnCache.set(type, fnVar);
+                                detector = createJITChangeDetectorForSnapshot(classSchema, state);
+                                state.detectorCache.set(type, detector);
                             } finally {
                                 state.typeStack.delete(type);
                             }
@@ -378,15 +383,7 @@ function buildNestedObjectComparator(
                     }
 
                     const itemValue = b.get(item, changedKey);
-                    const thisChanged = b.let(
-                        b.call<ItemChanges<any> | undefined>(
-                            (fn: Function, l: any, c: any, i: any) => fn(l, c, i),
-                            b.getVar(fnVar),
-                            last,
-                            current,
-                            itemValue,
-                        ),
-                    );
+                    const thisChanged = b.let(b.call<ItemChanges<any> | undefined>(detector, last, current, itemValue));
 
                     b.if_(b.and(thisChanged, b.not(b.call<boolean>(empty, thisChanged))), () => {
                         b.set(changesSlot, changedKey, itemValue);
@@ -446,11 +443,12 @@ function createJITChangeDetectorForSnapshot(
     parentState?: ChangeDetectorState,
 ): (lastSnapshot: any, currentSnapshot: any, item: any) => ItemChanges<any> | undefined {
     const state: ChangeDetectorState = {
-        fnCache: parentState?.fnCache ?? new Map(),
+        detectorCache: parentState?.detectorCache ?? new Map(),
         typeStack: parentState?.typeStack ?? new Set(),
+        pendingDetectors: parentState?.pendingDetectors ?? [],
     };
 
-    return fn(
+    const detector = fn(
         arg<any>(), // last snapshot
         arg<any>(), // current snapshot
         arg<any>(), // item
@@ -562,7 +560,20 @@ function createJITChangeDetectorForSnapshot(
             // Return changeSet if not empty, undefined otherwise
             return b.ternary(b.get<boolean>(changeSet, 'empty'), b.lit(undefined), changeSet);
         },
-    );
+    ) as (lastSnapshot: any, currentSnapshot: any, item: any) => ItemChanges<any> | undefined;
+
+    //A self-referencing type could not be built while this one was in progress,
+    //so its holder is filled in now that this detector exists. Only the outermost
+    //build resolves them, once every nested build has finished contributing.
+    if (!parentState) {
+        for (const pending of state.pendingDetectors) {
+            pending.holder.fn =
+                pending.classSchema === schema ? detector : createJITChangeDetectorForSnapshot(pending.classSchema);
+        }
+        state.pendingDetectors.length = 0;
+    }
+
+    return detector;
 }
 
 /**
