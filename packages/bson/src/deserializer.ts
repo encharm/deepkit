@@ -56,7 +56,7 @@ import { BSONError, TypeNotSerializableError } from './errors.js';
  * Maps 2-byte pairs to 4 hex chars, halving the number of string concatenations.
  */
 import { hexTable, hexTable2 } from './model.js';
-import { parseValueAny } from './parser.js';
+import { parseDocumentToObject, parseValueAny } from './parser.js';
 import {
     decodeUTF8,
     readBSONString,
@@ -1416,6 +1416,13 @@ function createDeserializer(type: Type): BSONDeserializer<any> {
     // Handle union of objects at top level (e.g., { a: string } | { b: number })
     if (type.kind === ReflectionKind.union) {
         return createUnionOfObjectsDeserializer(type as TypeUnion);
+    }
+
+    // any/unknown at the top level has no shape to compile against; parse the
+    // document with the runtime parser instead (mirrors createSerializer).
+    if (type.kind === ReflectionKind.any || type.kind === ReflectionKind.unknown) {
+        return ((buffer: Uint8Array, offset: number = 0) =>
+            parseDocumentToObject(buffer, offset)) as BSONDeserializer<any>;
     }
 
     if (type.kind !== ReflectionKind.objectLiteral && type.kind !== ReflectionKind.class) {
@@ -3466,20 +3473,51 @@ function deserializeTupleInto(
 
                 let elemIdx = 0;
                 for (const member of type.types as TypeTupleMember[]) {
-                    b.if_(b.lt(b.getVar(o), arrEnd), () => {
-                        const elemType = b.let(b.at(buffer, b.getVar(o)), 'tupleElemType');
-                        b.setVar(o, b.add(b.getVar(o), b.lit(1)));
+                    const idx = elemIdx;
+                    //a required member that is absent from the BSON array would
+                    //otherwise be silently dropped and later filled with the type
+                    //default (e.g. 0 for number), hiding the missing value
+                    const required = !member.optional && !isOptional(member.type);
+                    b.if_(
+                        b.lt(b.getVar(o), arrEnd),
+                        () => {
+                            const elemType = b.let(b.at(buffer, b.getVar(o)), 'tupleElemType');
+                            b.setVar(o, b.add(b.getVar(o), b.lit(1)));
 
-                        b.if_(b.neq(elemType, b.lit(0)), () => {
-                            // Skip index cstring
-                            b.setVar(o, b.call(skipCString, buffer, b.getVar(o)));
+                            b.if_(
+                                b.neq(elemType, b.lit(0)),
+                                () => {
+                                    // Skip index cstring
+                                    b.setVar(o, b.call(skipCString, buffer, b.getVar(o)));
 
-                            const elemCtx = ctx.forIndex(elemIdx);
-                            const elemVar = b.var_<any>(undefined, `tuple_${elemIdx}`);
-                            deserializeValueInto(b, buffer, o, elemType, member.type, elemVar, elemCtx);
-                            b.push(arr, b.getVar(elemVar));
-                        });
-                    });
+                                    const elemCtx = ctx.forIndex(idx);
+                                    const elemVar = b.var_<any>(undefined, `tuple_${idx}`);
+                                    deserializeValueInto(b, buffer, o, elemType, member.type, elemVar, elemCtx);
+                                    b.push(arr, b.getVar(elemVar));
+                                },
+                                required
+                                    ? () =>
+                                          b.throw_(
+                                              b.call(
+                                                  makeBsonConversionError,
+                                                  b.lit(BSONType.UNDEFINED),
+                                                  b.lit(describeType(member.type)),
+                                              ),
+                                          )
+                                    : undefined,
+                            );
+                        },
+                        required
+                            ? () =>
+                                  b.throw_(
+                                      b.call(
+                                          makeBsonConversionError,
+                                          b.lit(BSONType.UNDEFINED),
+                                          b.lit(describeType(member.type)),
+                                      ),
+                                  )
+                            : undefined,
+                    );
                     elemIdx++;
                 }
 

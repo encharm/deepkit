@@ -50,6 +50,7 @@ import {
     memberNameToString,
     resolveReceiveType,
     resolveTypeMembers,
+    stringifyType,
 } from '@deepkit/type';
 import type { DiscriminatorInfo } from '@deepkit/type';
 import { TypeNumberBrand } from '@deepkit/type-spec';
@@ -185,6 +186,15 @@ function createSerializer(type: Type): (data: any) => SerializeResult {
     // Handle union of object types (e.g., { a: number } | { a: number; b: string })
     if (type.kind === ReflectionKind.union) {
         return createUnionSerializer(type as TypeUnion);
+    }
+
+    // any/unknown at the top level carries no shape to compile against, so fall
+    // back to runtime type detection (the document must still be an object).
+    if (type.kind === ReflectionKind.any || type.kind === ReflectionKind.unknown) {
+        return (data: any): SerializeResult => {
+            assertSerializableObject(data, type);
+            return [sharedBuffer, serializeAnyObjectRuntime(sharedBuffer, sharedView, 0, data)];
+        };
     }
 
     if (type.kind !== ReflectionKind.objectLiteral && type.kind !== ReflectionKind.class) {
@@ -543,6 +553,9 @@ function serializeValue(
         }
         case ReflectionKind.null:
         case ReflectionKind.undefined:
+        //void and never carry no value; BSON represents them like undefined
+        case ReflectionKind.void:
+        case ReflectionKind.never:
             serializeNull(b, buffer, view, o, name);
             break;
         case ReflectionKind.class:
@@ -1647,6 +1660,53 @@ function buildExtractedSerializerCall(
 }
 
 /**
+ * Guard that a value is a serializable BSON document before writing it as one.
+ *
+ * Without this a primitive reaches the property writers and fails with an
+ * opaque TypeError (e.g. reading 'length' of undefined) instead of a BSONError.
+ */
+/**
+ * Whether a value cannot represent a required tuple member's primitive type.
+ *
+ * Only primitives are checked: the serializer coerces silently for these
+ * (undefined -> NaN -> 0 for number), so a mismatch would otherwise be lost.
+ * Richer types keep their existing behaviour.
+ */
+function isTupleMemberTypeMismatch(value: any, type: Type): boolean {
+    if (value === undefined) return true;
+    switch (type.kind) {
+        case ReflectionKind.number:
+            return typeof value !== 'number';
+        case ReflectionKind.string:
+            return typeof value !== 'string';
+        case ReflectionKind.boolean:
+            return typeof value !== 'boolean';
+        case ReflectionKind.bigint:
+            return typeof value !== 'bigint';
+        default:
+            return false;
+    }
+}
+
+/**
+ * Error for a required tuple member given a value of the wrong type.
+ */
+function makeTupleMemberTypeError(value: any, type: Type, path: string): BSONError {
+    const typeName = stringifyType(type, { showNames: false, showFullDefinition: true });
+    return new BSONError(`${path}(type): Cannot convert ${value} to ${typeName}`, 'DK-B030');
+}
+
+function assertSerializableObject(value: any, type: Type): void {
+    if (value === null || value === undefined) return;
+    if (typeof value !== 'object') {
+        //stringify lazily: during the build the type is mid-traversal and would
+        //render as '* Recursion *'
+        const typeName = stringifyType(type, { showNames: false, showFullDefinition: true });
+        throw new BSONError(`Cannot convert ${value} to ${typeName}`, 'DK-B030');
+    }
+}
+
+/**
  * Serialize a nested object property.
  * BSON embedded document: type (0x03) + name (cstring) + document
  * The nested structure is fully inlined in JIT — no recursion at runtime.
@@ -1687,6 +1747,9 @@ function serializeNestedObject(
     ctx.pushType(type);
 
     try {
+        //a primitive here would otherwise fail deep inside the property writers
+        b.exec(b.call(assertSerializableObject, value, b.lit(type)));
+
         writeHeader(b, buffer, view, o, BSONType.OBJECT, name, true); // followed by setInt32
 
         // Save start offset for backfilling document size
@@ -2188,15 +2251,27 @@ function serializeTuple(
             const elemType = member.type;
             const elemValue = b.get(value, b.lit(i));
             const indexStr = String(i);
-            const elemCtx = ctx.forProperty(`[${i}]`);
+            //prefer the member name (args.id) over the index (args.[0]) in errors
+            const elemCtx = ctx.forProperty(member.name ? String(member.name) : `[${i}]`);
 
             if (member.optional) {
                 // Optional tuple elements: skip if undefined
                 b.if_(b.neq(elemValue, b.lit(undefined)), () => {
                     serializeValue(b, buffer, view, o, indexStr, elemType, elemValue, elemCtx);
                 });
-            } else {
+            } else if (isNullishKind(elemType) || isOptional(elemType)) {
                 serializeValue(b, buffer, view, o, indexStr, elemType, elemValue, elemCtx);
+            } else {
+                //a required member given a value of the wrong type would otherwise be
+                //coerced silently (undefined -> NaN -> 0 for number), losing the error
+                b.if_(
+                    b.call(isTupleMemberTypeMismatch, elemValue, b.lit(elemType)),
+                    () =>
+                        b.throw_(
+                            b.call(makeTupleMemberTypeError, elemValue, b.lit(elemType), b.lit(elemCtx.getPath())),
+                        ),
+                    () => serializeValue(b, buffer, view, o, indexStr, elemType, elemValue, elemCtx),
+                );
             }
         }
     } else {
@@ -2347,16 +2422,26 @@ function serializeEnum(
 }
 
 /**
+ * Types that carry no BSON value and are written as BSON null.
+ * `void` behaves like `undefined` here (e.g. an RPC action returning void).
+ */
+function isNullishKind(type: Type): boolean {
+    return (
+        type.kind === ReflectionKind.null || type.kind === ReflectionKind.undefined || type.kind === ReflectionKind.void
+    );
+}
+
+/**
  * Check if a union is a simple nullable type: T | null or T | undefined.
  * Returns the non-null/undefined type if true, undefined otherwise.
  */
 function getSimpleNullableType(type: TypeUnion): Type | undefined {
     if (type.types.length !== 2) return undefined;
 
-    const nullishTypes = type.types.filter(t => t.kind === ReflectionKind.null || t.kind === ReflectionKind.undefined);
+    const nullishTypes = type.types.filter(isNullishKind);
     if (nullishTypes.length !== 1) return undefined;
 
-    const nonNullish = type.types.find(t => t.kind !== ReflectionKind.null && t.kind !== ReflectionKind.undefined);
+    const nonNullish = type.types.find(t => !isNullishKind(t));
     return nonNullish;
 }
 
@@ -2656,6 +2741,7 @@ function getTypePriority(type: Type): number {
     switch (type.kind) {
         case ReflectionKind.null:
         case ReflectionKind.undefined:
+        case ReflectionKind.void:
             return 0; // Check nullish first
         case ReflectionKind.bigint:
             return 1;
@@ -2725,6 +2811,7 @@ function getTypeCheck(member: Type, value: Ref<any>, b: Builder): Ref<boolean> |
         case ReflectionKind.null:
             return b.eq(value, b.lit(null));
         case ReflectionKind.undefined:
+        case ReflectionKind.void:
             return b.eq(value, b.lit(undefined));
         case ReflectionKind.string:
             return b.isType(value, 'string');
@@ -2787,7 +2874,7 @@ function serializeScoredUnion(
 
     // Pre-check: null/undefined coercion.
     // If union has null or undefined, both null and undefined values serialize as BSON NULL.
-    const hasNullish = type.types.some(t => t.kind === ReflectionKind.null || t.kind === ReflectionKind.undefined);
+    const hasNullish = type.types.some(isNullishKind);
     if (hasNullish) {
         b.if_(b.or(b.eq(value, b.lit(null)), b.eq(value, b.lit(undefined))), () => {
             serializeNull(b, buffer, view, o, name);
