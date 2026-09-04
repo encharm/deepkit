@@ -195,7 +195,7 @@ export class DatabaseEntityRegistry {
         if ((item as any).constructor === Object) {
             //search using type guards
             for (const entity of this.entities) {
-                if (is(item, undefined, undefined, entity.type)) return entity;
+                if (is(item, entity.type)) return entity;
             }
         } else {
             //it's a regular class

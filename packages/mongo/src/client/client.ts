@@ -7,13 +7,11 @@
  *
  * You should have received a copy of the MIT License along with this program.
  */
-import { BSONBinarySerializer } from '@deepkit/bson';
 import { sleep } from '@deepkit/core';
 import { EventDispatcher } from '@deepkit/event';
 import { ConsoleLogger, Logger } from '@deepkit/logger';
 import { ReflectionClass } from '@deepkit/type';
 
-import { mongoBinarySerializer } from '../mongo-serializer.js';
 import { Command } from './command/command.js';
 import { DropDatabaseCommand } from './command/dropDatabase.js';
 import { MongoClientConfig } from './config.js';
@@ -33,21 +31,13 @@ export class MongoClient {
     public pool: MongoConnectionPool;
     public stats: MongoStats = new MongoStats();
 
-    protected serializer: BSONBinarySerializer = mongoBinarySerializer;
-
     constructor(
         connectionString: string,
         public eventDispatcher: EventDispatcher = new EventDispatcher(),
         public logger: Logger = new ConsoleLogger(),
     ) {
         this.config = new MongoClientConfig(connectionString);
-        this.pool = new MongoConnectionPool(
-            this.config,
-            this.serializer,
-            this.stats,
-            this.logger,
-            this.eventDispatcher,
-        );
+        this.pool = new MongoConnectionPool(this.config, this.stats, this.logger, this.eventDispatcher);
         this.config.options.validate();
     }
 

@@ -8,16 +8,20 @@
  * You should have received a copy of the MIT License along with this program.
  */
 import { SqlSerializer } from '@deepkit/sql';
-import { TemplateState, Type, binaryTypes, isUUIDType } from '@deepkit/type';
+import { JsonTypeHandler, binaryTypes, isUUIDType } from '@deepkit/type';
+
+const BASE64_PREFIX = 'base64:type254:';
 
 //for queries with `returning`, MySQL returns binary stuff as base64.
-function convertBinaryFromBase64(type: Type, state: TemplateState) {
-    state.setContext({ Buffer });
-    const offset = 'base64:type254:'.length;
-    state.addSetter(
-        `typeof ${state.accessor} === 'string' && ${state.accessor}.startsWith('base64:') ? Buffer.from(${state.accessor}.substr(${offset}), 'base64') : ${state.accessor}`,
-    );
+function decodeBase64Binary(value: any): any {
+    return typeof value === 'string' && value.startsWith('base64:')
+        ? Buffer.from(value.substr(BASE64_PREFIX.length), 'base64')
+        : value;
 }
+
+const convertBinaryFromBase64: JsonTypeHandler = (type, input, b) => {
+    return b.call(decodeBase64Binary, input);
+};
 
 class MySQLSerializer extends SqlSerializer {
     name = 'mysql';
@@ -25,14 +29,16 @@ class MySQLSerializer extends SqlSerializer {
     protected registerSerializers() {
         super.registerSerializers();
 
-        for (const b of binaryTypes) {
-            this.deserializeRegistry.prependClass(b, convertBinaryFromBase64);
+        for (const binaryType of binaryTypes) {
+            this.deserializeRegistry.prependClass(binaryType, convertBinaryFromBase64);
         }
 
-        this.deserializeRegistry.addPreHook((type, state) => {
-            if (isUUIDType(type)) {
-                convertBinaryFromBase64(type, state);
-            }
+        //a UUID column also arrives base64-encoded from `returning` queries, so
+        //decode it before the UUID handler inherited from SqlSerializer reads it
+        const uuidHandler = this.deserializeRegistry.getDecorator(isUUIDType);
+        this.deserializeRegistry.prependDecorator(isUUIDType, (type, input, b, state) => {
+            const decoded = b.call(decodeBase64Binary, input);
+            return uuidHandler ? uuidHandler(type, decoded, b, state) : decoded;
         });
     }
 }

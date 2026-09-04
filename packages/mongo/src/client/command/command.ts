@@ -23,7 +23,6 @@ import {
     typeSettings,
 } from '@deepkit/type';
 
-import { mongoBinarySerializer } from '../../mongo-serializer.js';
 import type { MongoClientConfig } from '../config.js';
 import type { MongoDatabaseTransaction } from '../connection.js';
 import { MongoDatabaseError, MongoError, handleErrorResponse } from '../error.js';

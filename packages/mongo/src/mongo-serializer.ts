@@ -7,15 +7,13 @@
  *
  * You should have received a copy of the MIT License along with this program.
  */
-import { BSONBinarySerializer, ValueWithBSONSerializer } from '@deepkit/bson';
+import { ValueWithBSONSerializer } from '@deepkit/bson';
 import {
-    ContainerAccessor,
-    EmptySerializer,
+    JsonTypeHandler,
     ReflectionClass,
     ReflectionKind,
-    TemplateState,
+    Serializer,
     Type,
-    executeTemplates,
     isBinaryBigIntType,
     isMongoIdType,
     isReferenceType,
@@ -23,68 +21,55 @@ import {
 } from '@deepkit/type';
 
 /**
- * Serializer class from BSONBinarySerializer with a few adjustments to make sure
- * it works correctly with MongoDB.
+ * Wraps a value with the type BSON should encode it as.
+ *
+ * Filters and patches are typed `any` (spelling out the real type would be
+ * impractical), so the BSON serializer would otherwise see a plain string and
+ * lose the fact that it is a MongoId, UUID or binary bigint.
  */
-class MongoBinarySerializer extends BSONBinarySerializer {
-    //import to set name so `Excluded<'mongo'>` is correctly handled
-    name = 'mongo';
-
-    constructor() {
-        super({ forMongoDatabase: true });
-    }
-}
-
-export const mongoBinarySerializer = new MongoBinarySerializer();
-
-function wrapValueWithBsonSerializer(type: Type, state: TemplateState): string {
-    state.setContext({ ValueWithBSONSerializer });
-    return `new ValueWithBSONSerializer(${state.accessor}, ${state.setVariable('type', type)})`;
+function wrapValue(value: any, type: Type): ValueWithBSONSerializer {
+    return new ValueWithBSONSerializer(value, type);
 }
 
 /**
- * A serializer that converts class type values to a wrapped value so
- * that the actual BSON serializer (MongoBinarySerializer/BSONBinarySerializer) knows how to serialize
- * them in a `any` type. (any type is used in filter & patch, since the type would be too complex otherwise).
+ * A serializer that converts values to a wrapped value so that the BSON
+ * serializer knows how to encode them where the document declares `any`.
  */
-class MongoAnySerializer extends EmptySerializer {
+class MongoAnySerializer extends Serializer {
     name = 'mongo';
 
     protected registerSerializers() {
         super.registerSerializers();
-        this.serializeRegistry.register(ReflectionKind.string, (type, state) => {
-            if (isUUIDType(type) || isMongoIdType(type)) {
-                state.addSetter(wrapValueWithBsonSerializer(type, state));
-            } else {
-                state.addSetter(state.accessor);
-            }
-        });
-        this.serializeRegistry.register(ReflectionKind.bigint, (type, state) => {
-            if (isBinaryBigIntType(type)) {
-                state.addSetter(wrapValueWithBsonSerializer(type, state));
-            } else {
-                state.addSetter(state.accessor);
-            }
+
+        this.serializeRegistry.register(ReflectionKind.string, (type, input, b) => {
+            if (!isUUIDType(type) && !isMongoIdType(type)) return input;
+            return b.call(wrapValue, input, b.lit(type));
         });
 
-        this.serializeRegistry.append(ReflectionKind.class, (type, state) => {
-            if (isReferenceType(type)) {
-                if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return;
-                const reflection = ReflectionClass.from(type);
-                state.setContext({ ValueWithBSONSerializer });
-                //the primary key is serialised for unhydrated references
-                state.template = `
-                    if (isObject(${state.accessor}) && !(${state.accessor} instanceof ValueWithBSONSerializer)) {
-                        ${executeTemplates(state.fork(state.setter, new ContainerAccessor(state.accessor, JSON.stringify(reflection.getPrimary().getName()))), reflection.getPrimary().getType())}
-                    } else {
-                        ${state.setter} = ${state.accessor};
-                    }
-                `;
-            }
+        this.serializeRegistry.register(ReflectionKind.bigint, (type, input, b) => {
+            if (!isBinaryBigIntType(type)) return input;
+            return b.call(wrapValue, input, b.lit(type));
         });
 
-        this.serializeRegistry.register(ReflectionKind.undefined, (type, state) => state.addSetter(`null`));
-        this.deserializeRegistry.register(ReflectionKind.undefined, (type, state) => state.addSetter(`undefined`));
+        this.serializeRegistry.append(ReflectionKind.class, (type, input, b, state) => {
+            if (!isReferenceType(type)) return input;
+            if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return input;
+
+            const primary = ReflectionClass.from(type).getPrimary();
+            //an unhydrated reference is stored as its primary key, but a value
+            //that is already wrapped has been converted and is passed through
+            return b.ternary(
+                b.call(
+                    (v: any) => v !== null && typeof v === 'object' && !(v instanceof ValueWithBSONSerializer),
+                    input,
+                ),
+                state.build(primary.getType(), input.get(primary.getName())),
+                input,
+            );
+        });
+
+        this.serializeRegistry.register(ReflectionKind.undefined, (type, input, b) => b.lit(null));
+        this.deserializeRegistry.register(ReflectionKind.undefined, (type, input, b) => b.lit(undefined));
     }
 }
 

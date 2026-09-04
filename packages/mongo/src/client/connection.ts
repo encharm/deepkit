@@ -10,7 +10,7 @@
 import { Socket, createConnection } from 'net';
 import { TLSSocket, connect as createTLSConnection } from 'tls';
 
-import { BSONBinarySerializer, BsonStreamReader, Writer, getBSONSerializer, getBSONSizer } from '@deepkit/bson';
+import { BSONStreamReader, getBSONSerializer } from '@deepkit/bson';
 import { arrayRemoveItem, asyncOperation, formatError } from '@deepkit/core';
 import { DataEvent, EventDispatcher, EventTokenSync } from '@deepkit/event';
 import { Logger } from '@deepkit/logger';
@@ -115,7 +115,6 @@ export class MongoConnectionPool {
 
     constructor(
         protected config: MongoClientConfig,
-        protected serializer: BSONBinarySerializer,
         protected stats: MongoStats,
         public logger: Logger,
         public eventDispatcher: EventDispatcher,
@@ -459,7 +458,6 @@ export class MongoConnectionPool {
             this.connectionId++,
             host,
             this.config,
-            this.serializer,
             connection => {
                 arrayRemoveItem(host.connections, connection);
                 arrayRemoveItem(this.connections, connection);
@@ -745,7 +743,7 @@ export class MongoConnection {
 
     public transaction?: WeakRef<MongoDatabaseTransaction>;
 
-    responseParser: BsonStreamReader;
+    responseParser: BSONStreamReader;
     error?: Error;
 
     bytesReceived: number = 0;
@@ -758,13 +756,12 @@ export class MongoConnection {
         public id: number,
         public host: Host,
         protected config: MongoClientConfig,
-        protected serializer: BSONBinarySerializer,
         protected onClose: (connection: MongoConnection) => void,
         protected onRelease: (connection: MongoConnection) => void,
         protected onSent: (bytes: number) => void,
         protected onReceived: (bytes: number) => void,
     ) {
-        this.responseParser = new BsonStreamReader(this.onResponse.bind(this));
+        this.responseParser = new BSONStreamReader(this.onResponse.bind(this));
 
         if (this.config.options.ssl === true) {
             const options: { [name: string]: any } = {
@@ -961,42 +958,26 @@ export class MongoConnection {
     }
 
     protected sendMessage<T>(type: Type, message: T) {
-        //todo: check if we can just reuse an older buffer, or maybe we cache the buffer to commands
-        const messageSerializer = getBSONSerializer(type);
-        const messageSizer = getBSONSizer(this.serializer, type);
-
-        const buffer = Buffer.allocUnsafe(16 + 4 + 1 + messageSizer(message));
-        // const buffer = Buffer.alloc(16 + 4 + 10 + 1 + 4 + 4 + calculateObjectSize(message));
-
-        const writer = new Writer(buffer);
-
-        //header, 16 bytes
-        const messageId = ++this.messageId;
-        writer.writeInt32(10); //messageLength, 4
-        writer.writeInt32(messageId); //requestID, 4
-        writer.writeInt32(0); //responseTo, 4
-        writer.writeInt32(2013); //OP_MSG, 4
-        // writer.writeInt32(2004); //OP_QUERY, 4
-
-        //OP_MSG, 5 bytes
-        writer.writeUint32(0); //message flags, 4
-        writer.writeByte(0); //kind 0, 1
-
-        // //OP_QUERY, 5 bytes
-        // writer.writeUint32(0); //message flags, 4
-        // writer.writeAsciiString('admin.$cmd'); //collection name, 10
-        // writer.writeByte(0); //null, 1
-        // writer.writeInt32(0); //skip, 4
-        // writer.writeInt32(1); //return, 4
-
         try {
-            const section = messageSerializer(message);
-            // console.log('send', this.id, message);
-            writer.writeBuffer(section);
+            //the serializer returns [sharedBuffer, size] and reuses that buffer
+            //across calls, so the section is written into the message right away
+            const [section, sectionSize] = getBSONSerializer(type)(message);
 
-            const messageLength = writer.offset;
-            writer.offset = 0;
-            writer.writeInt32(messageLength);
+            //<header 16><flags 4><kind 1><section>
+            const messageLength = 16 + 4 + 1 + sectionSize;
+            const buffer = Buffer.allocUnsafe(messageLength);
+
+            //header, 16 bytes
+            buffer.writeInt32LE(messageLength, 0);
+            buffer.writeInt32LE(++this.messageId, 4); //requestID
+            buffer.writeInt32LE(0, 8); //responseTo
+            buffer.writeInt32LE(2013, 12); //OP_MSG
+
+            //OP_MSG, 5 bytes
+            buffer.writeUInt32LE(0, 16); //message flags
+            buffer[20] = 0; //kind 0
+
+            buffer.set(section.subarray(0, sectionSize), 21);
 
             //detect backPressure
             this.bytesSent += buffer.byteLength;

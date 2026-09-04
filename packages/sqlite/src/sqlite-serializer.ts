@@ -15,13 +15,14 @@ class SQLiteSerializer extends SqlSerializer {
     protected registerSerializers() {
         super.registerSerializers();
 
-        this.serializeRegistry.registerClass(Date, (type, state) => {
-            state.addSetter(`${state.accessor}.toJSON();`);
+        this.serializeRegistry.registerClass(Date, (type, input, b) => {
+            return b.call((d: Date) => d.toJSON(), input);
         });
 
-        this.serializeRegistry.append(ReflectionKind.boolean, (type, state) => {
-            if (!isDirectPropertyOfEntity(state)) return;
-            state.addSetter(`${state.accessor} ? 1 : 0`);
+        this.serializeRegistry.append(ReflectionKind.boolean, (type, input, b, state) => {
+            //sqlite has no boolean column type, so a direct column is stored as 0/1
+            if (!isDirectPropertyOfEntity(state)) return input;
+            return b.ternary(input, b.lit(1), b.lit(0));
         });
     }
 }

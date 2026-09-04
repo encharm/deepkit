@@ -7,18 +7,19 @@
  *
  * You should have received a copy of the MIT License along with this program.
  */
+import { Builder, Ref } from '@deepkit/core';
 import {
-    ContainerAccessor,
+    JsonBuildContext,
+    JsonTypeHandler,
     ReflectionClass,
     ReflectionKind,
     Serializer,
-    TemplateState,
     Type,
     TypeArray,
     TypeClass,
     TypeObjectLiteral,
     TypeUnion,
-    executeTemplates,
+    handleObjectLiteral,
     handleUnion,
     isBackReferenceType,
     isPropertyMemberType,
@@ -27,7 +28,6 @@ import {
     nodeBufferToArrayBuffer,
     nodeBufferToTypedArray,
     referenceAnnotation,
-    serializeObjectLiteral,
     typedArrayToBuffer,
     uuidAnnotation,
 } from '@deepkit/type';
@@ -43,7 +43,7 @@ for (let i = 0; i < 256; i++) {
  * Only direct properties of an entity will be serialized in some special way.
  * Deeper types get the normal JSON serialization.
  */
-export function isDirectPropertyOfEntity(state: TemplateState): boolean {
+export function isDirectPropertyOfEntity(state: JsonBuildContext): boolean {
     // Entities can be child of another entity without Reference,
     // so in order to detect a type being in direct property of an entity,
     // we look at state.parentTypes, which can only be
@@ -54,225 +54,185 @@ export function isDirectPropertyOfEntity(state: TemplateState): boolean {
     //  - [class|objectLiteral, property|indexSignature, Class|objectLiteral & Reference, this];
     //  - [property|indexSignature, Class|objectLiteral & Reference, this];
 
-    if (state.parentTypes.length < 2) return false;
+    const parentTypes = state.parentTypes;
+    if (parentTypes.length < 2) return false;
 
-    if (isPropertyMemberType(state.parentTypes[0]) || state.parentTypes[0].kind === ReflectionKind.indexSignature) {
-        if (state.parentTypes[1].kind === ReflectionKind.union) {
-            return state.parentTypes.length === 3;
+    if (isPropertyMemberType(parentTypes[0]) || parentTypes[0].kind === ReflectionKind.indexSignature) {
+        if (parentTypes[1].kind === ReflectionKind.union) {
+            return parentTypes.length === 3;
         }
 
-        if (state.parentTypes.length === 3 && isReferenceType(state.parentTypes[1])) {
+        if (parentTypes.length === 3 && isReferenceType(parentTypes[1])) {
             return true;
         }
 
-        return state.parentTypes.length === 2;
+        return parentTypes.length === 2;
     }
 
-    if (state.parentTypes.length < 3) return false;
+    if (parentTypes.length < 3) return false;
 
-    if (
-        state.parentTypes[0].kind !== ReflectionKind.class &&
-        state.parentTypes[0].kind !== ReflectionKind.objectLiteral
-    )
+    if (parentTypes[0].kind !== ReflectionKind.class && parentTypes[0].kind !== ReflectionKind.objectLiteral) {
         return false;
-
-    if (
-        state.parentTypes[1].kind !== ReflectionKind.property &&
-        state.parentTypes[1].kind !== ReflectionKind.propertySignature &&
-        state.parentTypes[1].kind !== ReflectionKind.indexSignature
-    )
-        return false;
-
-    if (state.parentTypes[2].kind === ReflectionKind.union) {
-        return state.parentTypes.length === 3 || state.parentTypes.length === 4;
     }
 
-    if (state.parentTypes.length === 4 && isReferenceType(state.parentTypes[2])) {
+    if (
+        parentTypes[1].kind !== ReflectionKind.property &&
+        parentTypes[1].kind !== ReflectionKind.propertySignature &&
+        parentTypes[1].kind !== ReflectionKind.indexSignature
+    ) {
+        return false;
+    }
+
+    if (parentTypes[2].kind === ReflectionKind.union) {
+        return parentTypes.length === 3 || parentTypes.length === 4;
+    }
+
+    if (parentTypes.length === 4 && isReferenceType(parentTypes[2])) {
         return true;
     }
 
-    return state.parentTypes.length === 3;
+    return parentTypes.length === 3;
 }
 
-function serializeSqlAny(type: Type, state: TemplateState) {
-    if (!isDirectPropertyOfEntity(state)) {
-        state.addSetter(`${state.accessor}`);
-        return;
-    }
-
-    state.setContext({ jsonStringify: JSON.stringify });
-    state.addSetter(`jsonStringify(${state.accessor})`);
+/** Parses a column that the database returns as a JSON string. */
+function parseJsonColumn(value: any): any {
+    return 'string' === typeof value ? JSON.parse(value) : value;
 }
 
-function deserializeSqlAny(type: Type, state: TemplateState) {
-    if (!isDirectPropertyOfEntity(state)) {
-        state.addSetter(`${state.accessor}`);
-        return;
-    }
-    state.setContext({ jsonParse: JSON.parse });
-    state.addCode(
-        `${state.setter} = 'string' === typeof ${state.accessor} ? jsonParse(${state.accessor}) : ${state.accessor};`,
-    );
+const serializeSqlAny: JsonTypeHandler = (type, input, b, state) => {
+    if (!isDirectPropertyOfEntity(state)) return input;
+    return b.call(JSON.stringify, input);
+};
+
+const deserializeSqlAny: JsonTypeHandler = (type, input, b, state) => {
+    if (!isDirectPropertyOfEntity(state)) return input;
+    return b.call(parseJsonColumn, input);
+};
+
+/**
+ * For sql databases, arrays are stored as a JSON string.
+ */
+const serializeSqlArray: JsonTypeHandler = (type, input, b, state) => {
+    if (undefined !== referenceAnnotation.getFirst(type as TypeArray)) return input;
+    if (!isDirectPropertyOfEntity(state)) return input;
+    return b.call(JSON.stringify, input);
+};
+
+const deserializeSqlArray: JsonTypeHandler = (type, input, b, state) => {
+    if (undefined !== referenceAnnotation.getFirst(type as TypeArray)) return input;
+    if (!isDirectPropertyOfEntity(state)) return input;
+    return b.call(parseJsonColumn, input);
+};
+
+/**
+ * A reference is stored as its primary key only, so serialize just that.
+ */
+const serializeReferencedType: JsonTypeHandler = (type, input, b, state) => {
+    if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return input;
+    const primary = ReflectionClass.from(type).getPrimary();
+    //an unhydrated reference carries only the primary key
+    return state.build(primary.getType(), input.get(primary.getName()));
+};
+
+const deserializeReferencedType: JsonTypeHandler = (type, input, b, state) => {
+    if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return input;
+    const primary = ReflectionClass.from(type).getPrimary();
+    return state.build(primary.getType(), input);
+};
+
+/**
+ * Handlers registered for a class (Date, Set, Map, binary types) take
+ * precedence: a registered kind handler for `class` would otherwise shadow
+ * them, and a Date column would be treated as a JSON object.
+ */
+function classHandlersFor(type: Type, state: JsonBuildContext) {
+    if (type.kind !== ReflectionKind.class) return undefined;
+    const handlers = state.registry.getClassHandlers((type as TypeClass).classType);
+    return handlers.length > 0 ? handlers : undefined;
+}
+
+function runHandlers(handlers: JsonTypeHandler[], type: Type, input: Ref, b: Builder, state: JsonBuildContext): Ref {
+    let result = input;
+    for (const handler of handlers) result = handler(type, result, b, state);
+    return result;
 }
 
 /**
  * For sql databases, objects will be serialised as JSON string.
  */
-function serializeSqlArray(type: TypeArray, state: TemplateState) {
-    if (undefined !== referenceAnnotation.getFirst(type)) return;
-
-    if (!isDirectPropertyOfEntity(state)) return;
-
-    state.setContext({ stringify: JSON.stringify });
-    state.addSetter(`stringify(${state.accessor})`);
-}
-
-/**
- * For sql databases, objects will be serialised as JSON string.
- */
-function deserializeSqlArray(type: TypeArray, state: TemplateState) {
-    if (undefined !== referenceAnnotation.getFirst(type)) return;
-
-    if (!isDirectPropertyOfEntity(state)) return;
-
-    state.addCode(
-        `${state.setter} = 'string' === typeof ${state.accessor} ? JSON.parse(${state.accessor}) : ${state.accessor};`,
-    );
-}
-
-/**
- * For sql databases, objects will be serialised as JSON string.
- */
-function serializeSqlObjectLiteral(type: TypeClass | TypeObjectLiteral, state: TemplateState) {
+const serializeSqlObjectLiteral: JsonTypeHandler = (type, input, b, state) => {
     if (isReferenceType(type) || isBackReferenceType(type)) {
-        serializeReferencedType(type, state);
-    } else {
-        serializeObjectLiteral(type, state);
-
-        if (isDirectPropertyOfEntity(state)) {
-            //TypeClass|TypeObjectLiteral properties are serialized as JSON
-            state.setContext({ stringify: JSON.stringify });
-            state.addSetter(`stringify(${state.accessor})`);
-        }
+        return serializeReferencedType(type, input, b, state);
     }
-}
+
+    const classHandlers = classHandlersFor(type, state);
+    if (classHandlers) return runHandlers(classHandlers, type, input, b, state);
+
+    const serialized = handleObjectLiteral(type as TypeClass | TypeObjectLiteral, input, b, state);
+    //TypeClass|TypeObjectLiteral properties are serialized as JSON
+    if (!isDirectPropertyOfEntity(state)) return serialized;
+    return b.call(JSON.stringify, serialized);
+};
 
 /**
- * For sql databases, objects will be serialised as JSON string. So deserialize it correctly
+ * For sql databases, objects will be serialised as JSON string. So deserialize it correctly.
  */
-function deserializeSqlObjectLiteral(type: TypeClass | TypeObjectLiteral, state: TemplateState) {
+const deserializeSqlObjectLiteral: JsonTypeHandler = (type, input, b, state) => {
     if (isReferenceType(type) || isBackReferenceType(type)) {
-        deserializeReferencedType(type, state);
-    } else {
-        if (isDirectPropertyOfEntity(state)) {
-            //TypeClass|TypeObjectLiteral properties are serialized as JSON
-            state.setContext({ jsonParse: JSON.parse });
-            state.addCode(
-                `${state.accessor} = 'string' === typeof ${state.accessor} ? jsonParse(${state.accessor}) : ${state.accessor}`,
-            );
-        }
-
-        serializeObjectLiteral(type, state);
+        return deserializeReferencedType(type, input, b, state);
     }
-}
 
-function serializeSqlUnion(type: TypeUnion, state: TemplateState) {
-    // // usually DB return JSON string, which we need to convert to objects first so the default union handler can work.
-    // if (isDirectPropertyOfEntity(state) && typeRequiresJSONCast(type)) {
-    //     state.setContext({ stringify: JSON.stringify });
-    //     state.addSetter(`stringify(${state.accessor})`);
-    // }
+    const classHandlers = classHandlersFor(type, state);
+    if (classHandlers) return runHandlers(classHandlers, type, input, b, state);
 
-    handleUnion(type, state);
-}
+    //the column arrives as a JSON string, so parse it before reading members
+    const value = isDirectPropertyOfEntity(state) ? b.call(parseJsonColumn, input) : input;
+    return handleObjectLiteral(type as TypeClass | TypeObjectLiteral, value, b, state);
+};
 
-function deserializeSqlUnion(type: TypeUnion, state: TemplateState) {
+const serializeSqlUnion: JsonTypeHandler = (type, input, b, state) => {
+    return handleUnion(type as TypeUnion, input, b, state);
+};
+
+const deserializeSqlUnion: JsonTypeHandler = (type, input, b, state) => {
     // usually DB return JSON string, which we need to convert to objects first so the default union handler can work.
-    if (isDirectPropertyOfEntity(state) && typeRequiresJSONCast(type)) {
-        // This must currently be in line with Platform's type detection (this.addType()),
-        // so this code expects that typeRequiresJSONCast knows when all platforms store JSON in the database,
-        // which make change in the future. Then we need to have information from the platform in this template function here.
-        state.setContext({ jsonParse: JSON.parse });
-        state.addCode(
-            `${state.accessor} = 'string' === typeof ${state.accessor} ? jsonParse(${state.accessor}) : ${state.accessor}`,
-        );
-    }
-
-    handleUnion(type, state);
-}
-
-function serializeReferencedType(type: Type, state: TemplateState) {
-    if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return;
-    // state.setContext({ isObject, isReferenceType, isReferenceHydrated });
-    const reflection = ReflectionClass.from(type);
-    //the primary key is serialised for unhydrated references
-    state.template = `
-        ${executeTemplates(state.fork(state.setter, new ContainerAccessor(state.accessor, JSON.stringify(reflection.getPrimary().getName()))), reflection.getPrimary().getType())}
-    `;
-}
-
-function deserializeReferencedType(type: Type, state: TemplateState) {
-    if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return;
-    // state.setContext({ isObject, isReferenceType, isReferenceHydrated });
-    const reflection = ReflectionClass.from(type);
-    //the primary key is serialised for unhydrated references
-    state.template = `
-        ${executeTemplates(state.fork(), reflection.getPrimary().getType())}
-    `;
-}
+    // This must currently be in line with Platform's type detection (this.addType()),
+    // so this code expects that typeRequiresJSONCast knows when all platforms store JSON in the database,
+    // which may change in the future. Then we need to have information from the platform in this template function here.
+    const value =
+        isDirectPropertyOfEntity(state) && typeRequiresJSONCast(type) ? b.call(parseJsonColumn, input) : input;
+    return handleUnion(type as TypeUnion, value, b, state);
+};
 
 export class SqlSerializer extends Serializer {
     name = 'sql';
 
-    override setExplicitUndefined(type: Type, state: TemplateState): boolean {
+    override setExplicitUndefined(type: Type, state: JsonBuildContext): boolean {
         //make sure that `foo?: string` is not explicitly set to undefined when database returns `null`.
-        if (state.target === 'deserialize') return false;
+        if (state.direction === 'deserialize') return false;
         return true;
     }
 
     protected registerSerializers() {
         super.registerSerializers();
 
-        this.serializeRegistry.registerClass(Date, (type, state) => {
-            //SQL escape does the job.
-            state.addSetter(`${state.accessor}`);
-        });
-
-        const uuidType = uuidAnnotation.registerType({ kind: ReflectionKind.string }, true);
+        //SQL escape does the job, so pass the Date through untouched.
+        this.serializeRegistry.registerClass(Date, (type, input) => input);
 
         this.serializeRegistry.register(ReflectionKind.any, serializeSqlAny);
         this.deserializeRegistry.register(ReflectionKind.any, deserializeSqlAny);
 
-        this.deserializeRegistry.register(ReflectionKind.string, (type, state) => {
-            //remove string enforcement, since UUID/MongoId are string but received as binary
-            state.addSetter(state.accessor);
+        //remove string enforcement, since UUID/MongoId are string but received as binary
+        this.deserializeRegistry.register(ReflectionKind.string, (type, input) => input);
+
+        //these take precedence over the string handling inherited from the base serializer
+        this.deserializeRegistry.prependDecorator(isUUIDType, (type, input, b) => {
+            return b.call(uuid4StringifyLenient, input);
         });
 
-        this.deserializeRegistry.removeDecorator(uuidType);
-        this.deserializeRegistry.addDecorator(isUUIDType, (type, state) => {
-            state.setContext({ uuid4Stringify });
-            state.addCodeForSetter(`
-                try {
-                    ${state.setter} = 'string' === typeof ${state.accessor} ? ${state.accessor} : uuid4Stringify(${state.accessor});
-                } catch (error) {
-                    throw new TypeError('Invalid UUID v4: ' + error);
-                }
-            `);
-        });
-
-        this.serializeRegistry.removeDecorator(uuidType);
-        this.serializeRegistry.addDecorator(isUUIDType, (type, state) => {
-            if (!isDirectPropertyOfEntity(state)) {
-                return;
-            }
-            state.setContext({ uuid4Binary });
-            state.addCodeForSetter(`
-                try {
-                    ${state.setter} = uuid4Binary(${state.accessor});
-                } catch (error) {
-                    throw new TypeError('Invalid UUID v4: ' + error);
-                }
-            `);
+        this.serializeRegistry.prependDecorator(isUUIDType, (type, input, b, state) => {
+            if (!isDirectPropertyOfEntity(state)) return input;
+            return b.call(uuid4BinaryStrict, input);
         });
 
         this.serializeRegistry.register(ReflectionKind.class, serializeSqlObjectLiteral);
@@ -287,39 +247,42 @@ export class SqlSerializer extends Serializer {
         this.serializeRegistry.register(ReflectionKind.union, serializeSqlUnion);
         this.deserializeRegistry.register(ReflectionKind.union, deserializeSqlUnion);
 
-        //for databases, types decorated with Reference will always only export the primary key.
-        // const referenceType = referenceAnnotation.registerType({ kind: ReflectionKind.class, classType: Object, types: [] }, {});
-        // this.serializeRegistry.removeDecorator(referenceType);
-        // this.serializeRegistry.addDecorator(isReferenceType, serializeReferencedType);
-        //
-        // //for databases, types decorated with BackReference will always only export the primary key.
-        // this.serializeRegistry.addDecorator(isBackReferenceType, serializeReferencedType);
-
-        this.serializeRegistry.registerBinary((type, state) => {
-            if (type.classType === ArrayBuffer) {
-                state.setContext({ Buffer });
-                state.addSetter(`Buffer.from(${state.accessor})`);
-            } else {
-                state.setContext({ typedArrayToBuffer });
-                state.addSetter(`typedArrayToBuffer(${state.accessor})`);
+        this.serializeRegistry.registerBinary((type, input, b) => {
+            if ((type as TypeClass).classType === ArrayBuffer) {
+                return b.call((v: ArrayBuffer) => Buffer.from(v), input);
             }
+            return b.call(typedArrayToBuffer, input);
         });
 
-        this.deserializeRegistry.registerBinary((type, state) => {
-            if (type.classType === ArrayBuffer) {
-                state.setContext({ nodeBufferToArrayBuffer });
-                state.addSetter(`nodeBufferToArrayBuffer(${state.accessor})`);
-            } else {
-                state.setContext({ nodeBufferToTypedArray });
-                state.addSetter(
-                    `nodeBufferToTypedArray(${state.accessor}, ${state.setVariable('typeArray', type.classType)})`,
-                );
+        this.deserializeRegistry.registerBinary((type, input, b) => {
+            if ((type as TypeClass).classType === ArrayBuffer) {
+                return b.call(nodeBufferToArrayBuffer, input);
             }
+            return b.call(nodeBufferToTypedArray, input, b.lit((type as TypeClass).classType));
         });
     }
 }
 
 export const sqlSerializer: Serializer = new SqlSerializer();
+
+/** Serializes a UUID column, rejecting values that are not valid UUID v4. */
+function uuid4BinaryStrict(v: any): Buffer {
+    try {
+        return uuid4Binary(v);
+    } catch (error) {
+        throw new TypeError('Invalid UUID v4: ' + error);
+    }
+}
+
+/** Reads a UUID column, which the driver may hand back as string or binary. */
+function uuid4StringifyLenient(v: any): string {
+    if ('string' === typeof v) return v;
+    try {
+        return uuid4Stringify(v);
+    } catch (error) {
+        throw new TypeError('Invalid UUID v4: ' + error);
+    }
+}
 
 export function uuid4Binary(u: any): Buffer {
     return 'string' === typeof u ? Buffer.from(u.replace(/-/g, ''), 'hex') : Buffer.alloc(0);
