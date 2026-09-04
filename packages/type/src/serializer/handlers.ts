@@ -2728,15 +2728,11 @@ function buildObjectLiteralBody(
                     },
                 );
             } else if (propType.kind === ReflectionKind.array && isBackReferenceType(memberType)) {
-                b.if_(
-                    b.eq(propInput, b.lit(unpopulatedSymbol)),
-                    () => {
-                        b.set(result, outputKey, b.emptyArr());
-                    },
-                    () => {
-                        b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
-                    },
-                );
+                //an unpopulated back reference is omitted rather than written as
+                //an empty array, which would read as "this entity has none"
+                b.if_(b.neq(propInput, b.lit(unpopulatedSymbol)), () => {
+                    b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
+                });
             } else {
                 b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
             }

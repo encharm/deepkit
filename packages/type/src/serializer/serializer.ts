@@ -443,12 +443,15 @@ export function createSerializeFunction(
     ) as SerializeFunction;
 
     //Reading an unpopulated reference throws by default, which is right for
-    //application code but not while serializing: the handlers expect
-    //`unpopulatedSymbol` and write the foreign key instead. Switch the mode for
-    //the duration of the call and always put it back.
+    //application code but not here. Serializing reads properties out and the
+    //handlers expect `unpopulatedSymbol`; deserializing constructs instances,
+    //whose constructors may read a not-yet-populated relation and should simply
+    //see undefined. Either way the previous mode is always restored.
+    const mode = direction === 'serialize' ? UnpopulatedCheck.ReturnSymbol : UnpopulatedCheck.None;
+
     return ((data: any, options?: SerializationOptions) => {
         const previous = typeSettings.unpopulatedCheck;
-        typeSettings.unpopulatedCheck = UnpopulatedCheck.ReturnSymbol;
+        typeSettings.unpopulatedCheck = mode;
         try {
             return compiled(data, options);
         } finally {
