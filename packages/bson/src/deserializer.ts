@@ -1248,22 +1248,19 @@ function deserializeReferencePk(
     const reflection = ReflectionClass.from(type.classType);
     const pk = reflection.getPrimary();
     const pkType = pk.getType();
-    // Deserialize the primary key value
-    switch (pkType.kind) {
-        case ReflectionKind.number: {
-            const result = readNumberValue(buffer, offset, bsonType);
-            return [createReference(type.classType, { [pk.getName()]: result[0] }), result[1]];
-        }
-        case ReflectionKind.string: {
-            const result = readStringValue(buffer, offset, bsonType);
-            return [createReference(type.classType, { [pk.getName()]: result[0] }), result[1]];
-        }
-        default: {
-            // For other pk types (bigint, etc.), try number
-            const result = readNumberValue(buffer, offset, bsonType);
-            return [createReference(type.classType, { [pk.getName()]: result[0] }), result[1]];
-        }
-    }
+    // Deserialize the primary key value.
+    // A UUID or MongoId primary key is a string in TypeScript but binary in BSON,
+    // so the annotation decides how to read it, not the kind alone.
+    const read = isUUIDType(pkType)
+        ? readUUIDValue
+        : isMongoIdType(pkType)
+          ? readMongoIdValue
+          : pkType.kind === ReflectionKind.string
+            ? readStringValue
+            : readNumberValue;
+
+    const result = read(buffer, offset, bsonType);
+    return [createReference(type.classType, { [pk.getName()]: result[0] }), result[1]];
 }
 
 // ============================================================================

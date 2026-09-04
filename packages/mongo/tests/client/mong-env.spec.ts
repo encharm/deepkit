@@ -10,7 +10,6 @@ import { MongoClientConfig } from '../../src/client/config.js';
 import { MongoConnection, MongoConnectionPool, MongoStats, onMongoTopologyChange } from '../../src/client/connection.js';
 import { MongoConnectionError } from '../../src/client/error.js';
 import { Host } from '../../src/client/host.js';
-import { mongoBinarySerializer } from '../../src/mongo-serializer.js';
 import { MongoEnv, MongoInstance, createMongoClientFactory } from './env-setup.js';
 
 jest.setTimeout(60 * 1000);
@@ -30,7 +29,6 @@ describe('basic', () => {
             1,
             host,
             config,
-            mongoBinarySerializer,
             connection => {
                 console.log('onClose', connection.id);
             },
@@ -53,7 +51,7 @@ describe('basic', () => {
         const stats = new MongoStats();
         const logger = new ConsoleLogger();
         const eventDispatcher = new EventDispatcher();
-        const pool = new MongoConnectionPool(config, mongoBinarySerializer, stats, logger, eventDispatcher);
+        const pool = new MongoConnectionPool(config, stats, logger, eventDispatcher);
 
         await expect(pool.getConnection()).rejects.toThrow('Connection failed');
     });
