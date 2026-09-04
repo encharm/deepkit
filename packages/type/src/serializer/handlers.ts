@@ -35,6 +35,7 @@ import {
     TypeMethodSignature,
     TypeNumber,
     TypeObjectLiteral,
+    TypeParameter,
     TypeProperty,
     TypePropertySignature,
     TypeTemplateLiteral,
@@ -2309,6 +2310,27 @@ export const guardObjectFast: JsonTypeHandler = (type, input, b, state) => {
 /**
  * Handle object literal serialization/deserialization.
  */
+/**
+ * Build the type carried by a property, property signature or parameter.
+ */
+export const handleMember: JsonTypeHandler = (type, input, b, state) => {
+    const member = type as TypeProperty | TypePropertySignature | TypeParameter;
+
+    //an optional member accepts being absent, which the type it carries does not
+    if (isOptional(member)) {
+        const result = b.var_<any>(b.lit(undefined));
+        b.if_(
+            b.neq(input, b.lit(undefined)),
+            () => b.setVar(result, state.build(member.type, input)),
+            //validating registries return whether the value is acceptable
+            () => b.setVar(result, b.lit(state.validation !== undefined ? true : undefined)),
+        );
+        return b.getVar(result);
+    }
+
+    return state.build(member.type, input);
+};
+
 export const handleObjectLiteral: JsonTypeHandler = (type, input, b, state) => {
     const objType = type as TypeObjectLiteral | TypeClass;
     const members = resolveTypeMembers(objType);
@@ -4268,6 +4290,14 @@ export function registerDefaultHandlers(serializer: Serializer): void {
     deserializeRegistry.register(ReflectionKind.tuple, handleTuple);
 
     // Objects and classes
+    //member kinds wrap a type: callers legitimately hand one of these straight to
+    //getSerializeFunction (an HTTP route parameter, or resolvePath's result), so
+    //build the type they carry rather than passing the value through untouched.
+    for (const kind of [ReflectionKind.property, ReflectionKind.propertySignature, ReflectionKind.parameter]) {
+        serializeRegistry.register(kind, handleMember);
+        deserializeRegistry.register(kind, handleMember);
+    }
+
     serializeRegistry.register(ReflectionKind.objectLiteral, handleObjectLiteral);
     deserializeRegistry.register(ReflectionKind.objectLiteral, handleObjectLiteral);
     serializeRegistry.register(ReflectionKind.class, handleObjectLiteral);
@@ -4333,6 +4363,11 @@ export function registerTypeGuards(serializer: Serializer): void {
     // Compound types
     reg.register(ReflectionKind.array, guardArrayFast);
     reg.register(ReflectionKind.union, guardUnionFast);
+    //member kinds wrap a type; guard what they carry (see handleMember)
+    for (const kind of [ReflectionKind.property, ReflectionKind.propertySignature, ReflectionKind.parameter]) {
+        reg.register(kind, handleMember);
+    }
+
     reg.register(ReflectionKind.objectLiteral, guardObjectFast);
     reg.register(ReflectionKind.class, guardObjectFast);
     reg.register(ReflectionKind.enum, guardEnumFast);

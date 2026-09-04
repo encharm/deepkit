@@ -198,19 +198,26 @@ export abstract class SerializerBuildContext {
         if (this.pathSegments.length === 0) {
             return this.b.lit('');
         }
+        //a runtime prefix may be empty, in which case it must not leave a
+        //leading dot, so joining is done at runtime for those
+        if (this.pathSegments.some(s => s instanceof DynamicPathSegment)) {
+            const parts = this.pathSegments.map(segment =>
+                segment instanceof DynamicPathSegment
+                    ? (this.b.call(String, segment.ref) as Ref<string>)
+                    : this.b.lit(segment),
+            );
+            return this.b.call(
+                (...segments: string[]) => segments.filter(s => s !== '').join('.'),
+                ...parts,
+            ) as Ref<string>;
+        }
         // Build path expression by concatenating segments
         const parts: Ref<string>[] = [];
         for (let i = 0; i < this.pathSegments.length; i++) {
             if (i > 0) {
                 parts.push(this.b.lit('.'));
             }
-            const segment = this.pathSegments[i];
-            if (segment instanceof DynamicPathSegment) {
-                // Dynamic segment - convert the number ref to string
-                parts.push(this.b.call(String, segment.ref) as Ref<string>);
-            } else {
-                parts.push(this.b.lit(segment));
-            }
+            parts.push(this.b.lit(this.pathSegments[i] as string));
         }
         return parts.length === 1 ? parts[0] : this.b.concat(...parts);
     }

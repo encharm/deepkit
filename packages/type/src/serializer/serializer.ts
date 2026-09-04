@@ -20,6 +20,7 @@ import {
 } from '../reflection/type.js';
 import { ValidationErrorItem } from '../validator.js';
 // Initialize the default serializer with handlers
+import { DynamicPathSegment } from './context.js';
 import { registerDefaultHandlers, registerTypeGuards as registerTypeGuardHandlers } from './handlers.js';
 import { NamingStrategy, defaultNamingStrategy } from './naming.js';
 import { HandlerRegistry } from './registry.js';
@@ -195,13 +196,22 @@ export class Serializer {
         return fn(
             arg<any>(),
             arg<{ errors?: ValidationErrorItem[] }>(),
-            (b: Builder, data: Ref<any>, stateArg: Ref<{ errors?: ValidationErrorItem[] }>) => {
+            //callers validating a single value name it, so its errors read
+            //`id(type): ...` rather than `(type): ...`
+            arg<string | undefined>(),
+            (
+                b: Builder,
+                data: Ref<any>,
+                stateArg: Ref<{ errors?: ValidationErrorItem[] }>,
+                pathPrefix: Ref<string | undefined>,
+            ) => {
                 const optionsRef = b.let(b.nullish(stateArg, b.emptyObj()));
 
                 const state = new JsonBuildContext('validate', this, b, optionsRef, this.typeGuards, {
                     validation: withLoose ? 'loose' : 'strict',
                     collectErrors: true,
                     rejectUnknownKeys: false,
+                    pathSegments: [new DynamicPathSegment(b.nullish(pathPrefix, b.lit('')) as Ref<any>)],
                 });
 
                 const result = state.build(type, data);

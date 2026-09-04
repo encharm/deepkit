@@ -148,7 +148,7 @@ test('router parameters', async () => {
 
     expect((await httpKernel.request(HttpRequest.GET('/user/peter'))).json).toBe('peter');
     expect((await httpKernel.request(HttpRequest.GET('/user-id/123'))).json).toBe(123);
-    expect((await httpKernel.request(HttpRequest.GET('/user-id/asd'))).json.message).toContain('Validation error:\nid(type): Cannot convert asd to number');
+    expect((await httpKernel.request(HttpRequest.GET('/user-id/asd'))).json.message).toContain('Validation error:\nid(type): Cannot convert string \"asd\" to number');
     expect((await httpKernel.request(HttpRequest.GET('/boolean/1'))).json).toBe(true);
     expect((await httpKernel.request(HttpRequest.GET('/boolean/false'))).json).toBe(false);
 
