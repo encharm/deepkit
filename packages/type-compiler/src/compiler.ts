@@ -927,10 +927,30 @@ export class ReflectionTransformer implements CustomTransformer {
 
                         // For single type param, read Ω directly (no array wrapper).
                         // For multiple type params, use element access Ω?.[index].
-                        const defaultValue =
-                            typeParameters.length === 1
-                                ? this.f.createPropertyAccessExpression(container, this.f.createIdentifier('Ω'))
-                                : this.f.createElementAccessChain(this.f.createPropertyAccessExpression(container, this.f.createIdentifier('Ω')), this.f.createToken(SyntaxKind.QuestionDotToken), this.f.createNumericLiteral(index));
+                        //
+                        // A caller may pass fewer type arguments than are declared
+                        // (`two<T, R = Base>` called as `two<M>()`), and the call site
+                        // sizes Ω by what was passed. A single packed type is then not
+                        // an array of types but one type, so indexing it would hand
+                        // parameter 0 the type's first element. `getReceiveType` reads
+                        // whichever shape arrived.
+                        const omega = this.f.createPropertyAccessExpression(container, this.f.createIdentifier('Ω'));
+                        let defaultValue: Expression;
+                        if (typeParameters.length === 1) {
+                            defaultValue = omega;
+                        } else {
+                            //Ω holds one packed type when the caller passed a single
+                            //type argument; its last element is the bytecode string,
+                            //whereas an array of types holds arrays. Only index the
+                            //latter, and only parameter 0 can be the single type.
+                            const isPacked = this.f.createBinaryExpression(
+                                this.f.createTypeOfExpression(this.f.createElementAccessChain(omega, this.f.createToken(SyntaxKind.QuestionDotToken), this.f.createNumericLiteral(1))),
+                                this.f.createToken(SyntaxKind.EqualsEqualsEqualsToken),
+                                this.f.createStringLiteral('string'),
+                            );
+                            const indexed = this.f.createElementAccessChain(omega, this.f.createToken(SyntaxKind.QuestionDotToken), this.f.createNumericLiteral(index));
+                            defaultValue = this.f.createConditionalExpression(isPacked, this.f.createToken(SyntaxKind.QuestionToken), index === 0 ? omega : this.f.createVoidZero(), this.f.createToken(SyntaxKind.ColonToken), indexed);
+                        }
 
                         return this.f.updateParameterDeclaration(node, node.modifiers as ReadonlyArray<Modifier>, node.dotDotDotToken, node.name, node.questionToken, receiveType, defaultValue);
                     }
