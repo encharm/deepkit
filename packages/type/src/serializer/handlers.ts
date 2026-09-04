@@ -73,7 +73,11 @@ import { UNION_LITERAL_THRESHOLD, detectDiscriminator } from './union-utils.js';
  * Type handler for JSON serialization.
  * Uses JsonBuildContext which provides JSON-specific methods like forProperty, isLoose, etc.
  */
-type JsonTypeHandler<T extends Type = Type> = TypeHandler<T, JsonBuildContext>;
+/**
+ * A handler for the JSON-style serializers. Exported so serializers outside
+ * this package (@deepkit/sql, @deepkit/mongo) can type their own handlers.
+ */
+export type JsonTypeHandler<T extends Type = Type> = TypeHandler<T, JsonBuildContext>;
 
 // ============================================================================
 // Validation Error Helpers
@@ -2586,7 +2590,7 @@ function buildObjectLiteralBody(
         if (canUseLiteral) {
             literalProps.push({
                 outputKey,
-                valueRef: state.build(propType, propInput),
+                valueRef: state.buildMember(memberType, propType, propInput),
             });
         } else {
             incrementalProps.push({
@@ -2619,12 +2623,17 @@ function buildObjectLiteralBody(
                         b.if_(
                             b.not(b.isNullish(propInput)),
                             () => {
-                                b.set(result, outputKey, state.build(propType, propInput));
+                                b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
                             },
                             () => {
                                 if (isNullable(memberType)) {
                                     b.set(result, outputKey, b.lit(null));
-                                } else if (isOptional(memberType)) {
+                                } else if (
+                                    isOptional(memberType) &&
+                                    state.serializer.setExplicitUndefined(memberType, state)
+                                ) {
+                                    //@deepkit/sql opts out: a database returns null for an
+                                    //absent optional column, and `'value' in row` must stay false
                                     b.set(result, outputKey, b.lit(undefined));
                                 }
                             },
@@ -2642,7 +2651,7 @@ function buildObjectLiteralBody(
                             b.if_(
                                 b.not(b.isNullish(propInput)),
                                 () => {
-                                    b.set(result, outputKey, state.build(propType, propInput));
+                                    b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
                                 },
                                 () => {
                                     if (isNullable(memberType) || isOptional(memberType)) {
@@ -2664,7 +2673,7 @@ function buildObjectLiteralBody(
                 b.if_(
                     b.not(b.isNullish(propInput)),
                     () => {
-                        b.set(result, outputKey, state.build(propType, propInput));
+                        b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
                     },
                     () => {
                         b.set(result, outputKey, b.lit(null));
@@ -2677,11 +2686,11 @@ function buildObjectLiteralBody(
                         b.set(result, outputKey, b.emptyArr());
                     },
                     () => {
-                        b.set(result, outputKey, state.build(propType, propInput));
+                        b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
                     },
                 );
             } else {
-                b.set(result, outputKey, state.build(propType, propInput));
+                b.set(result, outputKey, state.buildMember(memberType, propType, propInput));
             }
         }
     };
@@ -2751,7 +2760,7 @@ function buildObjectLiteralBody(
                                 b.neq(value, b.lit(undefined)),
                                 () => {
                                     const childState = state.forKey(key);
-                                    b.set(result, key, childState.build(valueType, value));
+                                    b.set(result, key, childState.buildMember(indexSignature, valueType, value));
                                 },
                                 () => {
                                     if (valueAllowsNull) b.set(result, key, b.lit(null));
@@ -2775,7 +2784,7 @@ function buildObjectLiteralBody(
                                 b.neq(value, b.lit(undefined)),
                                 () => {
                                     const childState = state.forKey(key);
-                                    b.set(result, key, childState.build(valueType, value));
+                                    b.set(result, key, childState.buildMember(indexSignature, valueType, value));
                                 },
                                 () => {
                                     if (valueAllowsNull) b.set(result, key, b.lit(null));
@@ -2792,7 +2801,7 @@ function buildObjectLiteralBody(
                         b.neq(value, b.lit(undefined)),
                         () => {
                             const childState = state.forKey(key);
-                            b.set(result, key, childState.build(valueType, value));
+                            b.set(result, key, childState.buildMember(indexSignature, valueType, value));
                         },
                         () => {
                             if (valueAllowsNull) b.set(result, key, b.lit(null));
@@ -3264,7 +3273,12 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                         () => {
                             if (isNullable(memberType)) {
                                 b.set(result, propName, b.lit(null));
-                            } else if (isOptional(memberType)) {
+                            } else if (
+                                isOptional(memberType) &&
+                                state.serializer.setExplicitUndefined(memberType, state)
+                            ) {
+                                //@deepkit/sql opts out: a database returns null for an
+                                //absent optional column, and `'value' in row` must stay false
                                 b.set(result, propName, b.lit(undefined));
                             }
                         },
@@ -3451,7 +3465,12 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                         () => {
                             if (isNullable(memberType)) {
                                 b.set(result, propName, b.lit(null));
-                            } else if (isOptional(memberType)) {
+                            } else if (
+                                isOptional(memberType) &&
+                                state.serializer.setExplicitUndefined(memberType, state)
+                            ) {
+                                //@deepkit/sql opts out: a database returns null for an
+                                //absent optional column, and `'value' in row` must stay false
                                 b.set(result, propName, b.lit(undefined));
                             }
                         },
@@ -3499,7 +3518,9 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                     () => {
                         if (isNullable(memberType)) {
                             b.set(result, propName, b.lit(null));
-                        } else if (isOptional(memberType)) {
+                        } else if (isOptional(memberType) && state.serializer.setExplicitUndefined(memberType, state)) {
+                            //@deepkit/sql opts out: a database returns null for an
+                            //absent optional column, and `'value' in row` must stay false
                             b.set(result, propName, b.lit(undefined));
                         }
                     },
@@ -3730,12 +3751,22 @@ export const guardReferenceFast: JsonTypeHandler = (type, input, b, state) => {
     const pkType = pkProperty.type;
     const pkName = String(pkProperty.getName());
 
-    const isObj = b.and(b.isType(input, 'object'), b.not(b.isNull(input)));
-    const pkInput = input.get(pkName);
-    const pkCheck = state.forProperty(pkName).build(pkType, pkInput) as Ref<boolean>;
-    const directCheck = state.build(pkType, input) as Ref<boolean>;
-
-    return b.ternary(isObj, pkCheck, directCheck);
+    //a reference is valid either as the loaded entity (check its primary key) or
+    //as the bare primary key. Both branches are built, but only one applies at
+    //runtime, so neither may record an error for the shape it does not match —
+    //error collection happens while building, not under the ternary.
+    const quiet = state.forUnionMember();
+    const valid = b.var_(b.lit(false));
+    b.if_(
+        b.and(b.isType(input, 'object'), b.not(b.isNull(input))),
+        () => b.setVar(valid, quiet.forProperty(pkName).build(pkType, input.get(pkName)) as Ref<boolean>),
+        () => b.setVar(valid, quiet.build(pkType, input) as Ref<boolean>),
+    );
+    //the fast guard has no options/errors argument to write into
+    if (state.collectErrors) {
+        pushTypeErrorWhen(b, state, input, b.not(b.getVar(valid)), getTypeMismatchMessage(type));
+    }
+    return b.getVar(valid) as Ref<boolean>;
 };
 
 // ============================================================================

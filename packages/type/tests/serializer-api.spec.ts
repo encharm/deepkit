@@ -39,17 +39,22 @@ test('TypeGuards HandlerRegistry', () => {
         return input;
     }
 
-    // Register handlers - they are executed in order (first registered runs first)
+    // register() replaces, so a serializer overriding a kind does not chain onto
+    // whatever the base registered; append() adds to the chain.
     serializer.typeGuards.register(ReflectionKind.number, number1);
-    serializer.typeGuards.register(ReflectionKind.number, number2);
+    serializer.typeGuards.append(ReflectionKind.number, number2);
 
     // Get handlers via getKindHandlers
     const handlers = serializer.typeGuards.getKindHandlers(ReflectionKind.number);
 
-    // Both handlers should be registered
+    // Both handlers should be registered, in order
     expect(handlers.length).toBe(2);
     expect(handlers[0]).toBe(number1);
     expect(handlers[1]).toBe(number2);
+
+    // registering again replaces both
+    serializer.typeGuards.register(ReflectionKind.number, number2);
+    expect(serializer.typeGuards.getKindHandlers(ReflectionKind.number).length).toBe(1);
 });
 
 test('HandlerRegistry basics', () => {

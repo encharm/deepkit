@@ -20,6 +20,7 @@ import {
 import { ReflectionClass, ReflectionProperty } from './reflection/reflection.js';
 import { ReflectionKind, Type, binaryTypes } from './reflection/type.js';
 import { Serializer, serializer as defaultSerializer } from './serializer/serializer.js';
+import { isBackReferenceType, isReferenceType } from './type-annotations.js';
 import { PrimaryKeyFields } from './type-annotations.js';
 
 /**
@@ -57,7 +58,22 @@ function cloneValueDeep(value: any): any {
  * Build a snapshot value converter for a single type.
  * Converts value to a snapshot-friendly format (JSON-like with references as primary keys).
  */
-function buildSnapshotValue(b: Builder, input: Ref, type: Type, direction: 'serialize' | 'deserialize'): Ref {
+function buildSnapshotValue(
+    b: Builder,
+    input: Ref,
+    type: Type,
+    direction: 'serialize' | 'deserialize',
+    typeStack: Set<Type> = new Set(),
+): Ref {
+    //a snapshot stores a reference as its primary keys only, which is both what
+    //the ORM compares against and what stops an entity graph from recursing
+    if (
+        (type.kind === ReflectionKind.class || type.kind === ReflectionKind.objectLiteral) &&
+        (isReferenceType(type) || isBackReferenceType(type) || typeStack.has(type))
+    ) {
+        return buildSnapshotPrimaryKeys(b, input, type, direction, typeStack);
+    }
+
     switch (type.kind) {
         case ReflectionKind.string:
         case ReflectionKind.number:
@@ -75,7 +91,7 @@ function buildSnapshotValue(b: Builder, input: Ref, type: Type, direction: 'seri
 
         case ReflectionKind.array: {
             const elemType = type.type;
-            return b.map(input, elem => buildSnapshotValue(b, elem, elemType, direction));
+            return b.map(input, elem => buildSnapshotValue(b, elem, elemType, direction, typeStack));
         }
 
         case ReflectionKind.class: {
@@ -122,17 +138,17 @@ function buildSnapshotValue(b: Builder, input: Ref, type: Type, direction: 'seri
                 return b.new_(Map, input);
             }
             // For other classes, treat as object literal
-            return buildSnapshotObject(b, input, type.types, direction);
+            return buildSnapshotObject(b, input, type.types, direction, withType(typeStack, type));
         }
 
         case ReflectionKind.objectLiteral:
-            return buildSnapshotObject(b, input, type.types, direction);
+            return buildSnapshotObject(b, input, type.types, direction, withType(typeStack, type));
 
         case ReflectionKind.tuple: {
             const result = b.let(b.emptyArr());
             for (let i = 0; i < type.types.length; i++) {
                 const member = type.types[i];
-                const elemValue = buildSnapshotValue(b, input.at(i), member.type, direction);
+                const elemValue = buildSnapshotValue(b, input.at(i), member.type, direction, typeStack);
                 b.push(result, elemValue);
             }
             return result;
@@ -150,6 +166,39 @@ function buildSnapshotValue(b: Builder, input: Ref, type: Type, direction: 'seri
 }
 
 /**
+ * A copy of `typeStack` with `type` added, used to detect a type that encloses
+ * itself while building.
+ */
+function withType(typeStack: Set<Type>, type: Type): Set<Type> {
+    const next = new Set(typeStack);
+    next.add(type);
+    return next;
+}
+
+/**
+ * Build a snapshot of a referenced entity: an object holding only its primary
+ * keys, or null when the reference is not set.
+ */
+function buildSnapshotPrimaryKeys(
+    b: Builder,
+    input: Ref,
+    type: Type,
+    direction: 'serialize' | 'deserialize',
+    typeStack: Set<Type>,
+): Ref {
+    const result = b.let(b.lit(null as any));
+    b.if_(b.not(b.isNullish(input)), () => {
+        const pks = b.let(b.emptyObj());
+        for (const primary of ReflectionClass.from(type).getPrimaries()) {
+            const name = primary.getNameAsString();
+            b.set(pks, name, buildSnapshotValue(b, input.get(name), primary.type, direction, typeStack));
+        }
+        b.setVar(result as any, pks);
+    });
+    return b.getVar(result as any);
+}
+
+/**
  * Build snapshot conversion for object/class members.
  * Handles both explicit properties and index signatures.
  */
@@ -158,6 +207,7 @@ function buildSnapshotObject(
     input: Ref,
     members: readonly Type[],
     direction: 'serialize' | 'deserialize',
+    typeStack: Set<Type> = new Set(),
 ): Ref {
     const result = b.let(b.emptyObj());
     const explicitNames: string[] = [];
@@ -176,7 +226,7 @@ function buildSnapshotObject(
         b.if_(
             b.not(b.isNullish(propAccess)),
             () => {
-                const value = buildSnapshotValue(b, propAccess, memberType, direction);
+                const value = buildSnapshotValue(b, propAccess, memberType, direction, typeStack);
                 b.set(result, propName, value);
             },
             () => {

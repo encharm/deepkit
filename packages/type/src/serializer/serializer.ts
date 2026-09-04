@@ -20,7 +20,7 @@ import {
 } from '../reflection/type.js';
 import { ValidationErrorItem } from '../validator.js';
 // Initialize the default serializer with handlers
-import { registerDefaultHandlers, registerTypeGuards } from './handlers.js';
+import { registerDefaultHandlers, registerTypeGuards as registerTypeGuardHandlers } from './handlers.js';
 import { NamingStrategy, defaultNamingStrategy } from './naming.js';
 import { HandlerRegistry } from './registry.js';
 import { BuildOptions, JsonBuildContext, SerializationOptions } from './state.js';
@@ -68,6 +68,12 @@ export class Serializer {
     };
 
     constructor(public name: string = 'json') {
+        //let the registries name their owner, so a build reached through one of
+        //them uses this serializer's overrides rather than the default's
+        this.serializeRegistry.serializer = this;
+        this.deserializeRegistry.serializer = this;
+        this.typeGuards.serializer = this;
+
         this.registerSerializers();
         this.registerTypeGuards();
     }
@@ -84,14 +90,19 @@ export class Serializer {
      * Register default serializers. Override in subclasses to customize.
      */
     protected registerSerializers(): void {
-        // Handlers will be registered via registerDefaultHandlers() from handlers.ts
+        //subclasses call super.registerSerializers() to inherit these and then
+        //override selectively, so the defaults belong here rather than in one
+        //particular subclass's constructor
+        registerDefaultHandlers(this);
+        registerUnionHandler(this);
+        registerValidationHook(this);
     }
 
     /**
      * Register default type guards. Override in subclasses to customize.
      */
     protected registerTypeGuards(): void {
-        // Guards will be registered via registerDefaultTypeGuards() from handlers.ts
+        registerTypeGuardHandlers(this);
     }
 
     /**
@@ -394,7 +405,7 @@ export function createSerializeFunction(
 
             const state = new JsonBuildContext(
                 direction,
-                serializer, // Use default serializer
+                (registry.serializer as Serializer) || serializer,
                 b,
                 optionsRef,
                 registry,
@@ -452,10 +463,6 @@ export function getPartialSerializeFunction(
 class JSONSerializer extends Serializer {
     constructor() {
         super('json');
-        registerDefaultHandlers(this);
-        registerTypeGuards(this);
-        registerUnionHandler(this);
-        registerValidationHook(this);
     }
 }
 

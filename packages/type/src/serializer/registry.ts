@@ -82,6 +82,15 @@ export class HandlerRegistry<Ctx extends SerializerBuildContext = SerializerBuil
     /** Unique ID that changes when handlers are modified. Used for cache invalidation. */
     public id: number;
     public readonly direction: 'serialize' | 'deserialize';
+    /**
+     * The serializer that owns this registry.
+     *
+     * Callers reach a serializer through one of its registries
+     * (`getSerializeFunction(type, sqlSerializer.deserializeRegistry)`), so the
+     * build context needs this to honour that serializer's overrides — its
+     * name, and setExplicitUndefined — rather than the default JSON one's.
+     */
+    public serializer?: unknown;
     /** Pre-formatted cache key for default naming strategy. Lazily computed. */
     _fastCacheKey?: string;
 
@@ -110,12 +119,11 @@ export class HandlerRegistry<Ctx extends SerializerBuildContext = SerializerBuil
      * Multiple handlers can be registered for the same kind.
      */
     register<T extends Type = Type>(kind: ReflectionKind, handler: TypeHandler<T, Ctx>): this {
-        const handlers = this.kindHandlers.get(kind);
-        if (handlers) {
-            handlers.push(handler);
-        } else {
-            this.kindHandlers.set(kind, [handler]);
-        }
+        //replaces every handler for this kind (including any added via prepend
+        //or append). A subclass registering a kind means "handle it this way",
+        //not "run after whatever the base serializer does" — appending here
+        //would chain both conversions over the same value.
+        this.kindHandlers.set(kind, [handler]);
         this.invalidateCache();
         return this;
     }
@@ -135,19 +143,41 @@ export class HandlerRegistry<Ctx extends SerializerBuildContext = SerializerBuil
     }
 
     /**
-     * Append a handler for a ReflectionKind (alias for register).
+     * Append a handler for a ReflectionKind (runs after existing handlers).
      */
     append<T extends Type = Type>(kind: ReflectionKind, handler: TypeHandler<T, Ctx>): this {
-        return this.register(kind, handler);
+        const handlers = this.kindHandlers.get(kind);
+        if (handlers) {
+            handlers.push(handler);
+        } else {
+            this.kindHandlers.set(kind, [handler]);
+        }
+        this.invalidateCache();
+        return this;
     }
 
     /**
      * Register a handler for a specific class type (Date, Set, Map, etc.).
      */
     registerClass<T extends Type = Type>(classType: ClassType, handler: TypeHandler<T, Ctx>): this {
+        //replaces every handler for this class, for the same reason as register()
+        this.classHandlers.set(classType, [handler]);
+        this.invalidateCache();
+        return this;
+    }
+
+    /**
+     * Register a handler for a class type ahead of the existing ones.
+     *
+     * Class handlers run in sequence, each receiving the previous result, so a
+     * serializer that must normalise a value before the inherited handler sees
+     * it (@deepkit/mysql decodes base64 before the binary conversion) registers
+     * it here instead of appending.
+     */
+    prependClass<T extends Type = Type>(classType: ClassType, handler: TypeHandler<T, Ctx>): this {
         const handlers = this.classHandlers.get(classType);
         if (handlers) {
-            handlers.push(handler);
+            handlers.unshift(handler);
         } else {
             this.classHandlers.set(classType, [handler]);
         }
@@ -171,6 +201,30 @@ export class HandlerRegistry<Ctx extends SerializerBuildContext = SerializerBuil
      */
     addDecorator<T extends Type = Type>(predicate: (type: Type) => boolean, handler: TypeHandler<T, Ctx>): this {
         this.annotationHandlers.push({ predicate, handler });
+        this.invalidateCache();
+        return this;
+    }
+
+    /**
+     * The handler currently registered for an annotation predicate, if any.
+     *
+     * Lets a serializer wrap an inherited decorator rather than replace it —
+     * @deepkit/mysql decodes base64 and then hands the value to the UUID
+     * handler it inherits from @deepkit/sql.
+     */
+    getDecorator(predicate: (type: Type) => boolean): TypeHandler<any, Ctx> | undefined {
+        return this.annotationHandlers.find(h => h.predicate === predicate)?.handler;
+    }
+
+    /**
+     * Register an annotation handler ahead of the existing ones.
+     *
+     * The first matching predicate wins, so a serializer that must override an
+     * inherited decorator (@deepkit/sql stores a UUID as binary rather than the
+     * default string) registers it here instead of appending.
+     */
+    prependDecorator<T extends Type = Type>(predicate: (type: Type) => boolean, handler: TypeHandler<T, Ctx>): this {
+        this.annotationHandlers.unshift({ predicate, handler });
         this.invalidateCache();
         return this;
     }

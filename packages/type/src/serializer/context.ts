@@ -51,6 +51,8 @@ export interface SerializerBuildContextOptions {
     maxDepth?: number;
     /** Path segments for error messages */
     pathSegments?: PathSegment[];
+    /** Chain of enclosing types (see SerializerBuildContext.parentTypes) */
+    parentTypes?: Type[];
     /** Naming strategy for property name transformation */
     namingStrategy?: NamingStrategy;
     /** Cache of extracted functions by type */
@@ -95,6 +97,21 @@ export abstract class SerializerBuildContext {
     /** Path segments for error messages */
     readonly pathSegments: PathSegment[];
 
+    /**
+     * The chain of types being built, outermost first, ending with the current
+     * type. Property and index-signature members are part of the chain, so a
+     * UUID column of an entity reads as [class, property, string].
+     *
+     * Serializers that depend on a value's position rather than its shape need
+     * this. @deepkit/sql, for example, encodes a UUID as binary only when it is
+     * a direct column of an entity, and as JSON when it is nested deeper.
+     *
+     * Unlike `typeStack` this is ordered and keeps every enclosing type, not
+     * only the complex ones, since the distinction being drawn is exactly
+     * "property of an entity" vs "somewhere further inside".
+     */
+    readonly parentTypes: Type[];
+
     /** Naming strategy for property name transformation */
     readonly namingStrategy: NamingStrategy;
 
@@ -114,6 +131,7 @@ export abstract class SerializerBuildContext {
         this.depth = options.depth ?? 0;
         this.maxDepth = options.maxDepth ?? SerializerBuildContext.DEFAULT_MAX_DEPTH;
         this.pathSegments = options.pathSegments ?? [];
+        this.parentTypes = options.parentTypes ?? [];
         this.namingStrategy = options.namingStrategy ?? defaultNamingStrategy;
         this.fnCache = options.fnCache ?? new Map();
     }
@@ -224,7 +242,27 @@ export abstract class SerializerBuildContext {
         }
 
         // 3. INLINE: Default - embed type handling directly
-        return this.buildInlineWithTracking(type, input);
+        // build() is the single point every type passes through, so the parent
+        // chain is maintained here rather than in each fork method.
+        this.parentTypes.push(type);
+        try {
+            return this.buildInlineWithTracking(type, input);
+        } finally {
+            this.parentTypes.pop();
+        }
+    }
+
+    /**
+     * Build a type that is reached through a property or index signature,
+     * keeping that member in {@link parentTypes}.
+     */
+    buildMember(member: Type, type: Type, input: Ref): Ref {
+        this.parentTypes.push(member);
+        try {
+            return this.build(type, input);
+        } finally {
+            this.parentTypes.pop();
+        }
     }
 
     /**

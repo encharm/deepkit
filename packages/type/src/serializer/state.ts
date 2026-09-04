@@ -262,6 +262,7 @@ export class JsonBuildContext extends SerializerBuildContext {
             typeStack: this.typeStack,
             fnCache: this.fnCache,
             pathSegments: [...this.pathSegments, name],
+            parentTypes: this.parentTypes,
             namingStrategy: this.namingStrategy,
             buildOptions: this.buildOptions,
         });
@@ -291,6 +292,7 @@ export class JsonBuildContext extends SerializerBuildContext {
             fnCache: new Map(), // Fresh cache - map callbacks create new JS scope
             // Use DynamicPathSegment with the actual index ref
             pathSegments: [...this.pathSegments, new DynamicPathSegment(index)],
+            parentTypes: this.parentTypes,
             namingStrategy: this.namingStrategy,
             buildOptions: this.buildOptions,
         });
@@ -316,6 +318,7 @@ export class JsonBuildContext extends SerializerBuildContext {
             typeStack: this.typeStack,
             fnCache: this.fnCache,
             pathSegments: [...this.pathSegments, new DynamicPathSegment(key)],
+            parentTypes: this.parentTypes,
             namingStrategy: this.namingStrategy,
             buildOptions: this.buildOptions,
         });
@@ -337,6 +340,7 @@ export class JsonBuildContext extends SerializerBuildContext {
             typeStack: this.typeStack,
             fnCache: this.fnCache,
             pathSegments: this.pathSegments,
+            parentTypes: this.parentTypes,
             namingStrategy: this.namingStrategy,
             buildOptions: this.buildOptions,
         });
@@ -360,6 +364,7 @@ export class JsonBuildContext extends SerializerBuildContext {
             typeStack: this.typeStack,
             fnCache: this.fnCache,
             pathSegments: this.pathSegments,
+            parentTypes: this.parentTypes,
             namingStrategy: this.namingStrategy,
             buildOptions: this.buildOptions,
         });
