@@ -754,6 +754,15 @@ export function serializeAnyPropertyRuntime(
         return writeRegExpData(buffer, offset, value);
     }
 
+    //binary has its own BSON type; without this a Buffer or typed array would
+    //fall through to the plain-object branch and be written as {} (a MongoDB
+    //patch carrying binary is `any`, so it arrives here)
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+        buffer[offset++] = BSONType.BINARY;
+        offset = writeName(buffer, offset, name);
+        return writeBinaryData(buffer, view, offset, value);
+    }
+
     // Plain object
     buffer[offset++] = BSONType.OBJECT;
     offset = writeName(buffer, offset, name);
