@@ -1460,8 +1460,16 @@ function serializeMongoId(
     name: PropertyName,
     value: Ref<string>,
 ): void {
-    writeHeader(b, buffer, view, o, BSONType.OID, name);
-    b.setVar(o, b.call<number>(writeObjectIdBranchless, buffer, b.getVar(o), value));
+    //a MongoId that is not set yet (a new document's _id defaults to '') writes
+    //as BSON null rather than being read as a 24-character hex string
+    b.if_(
+        b.or(b.isNullish(value), b.eq(value, b.lit(''))),
+        () => serializeNull(b, buffer, view, o, name),
+        () => {
+            writeHeader(b, buffer, view, o, BSONType.OID, name);
+            b.setVar(o, b.call<number>(writeObjectIdBranchless, buffer, b.getVar(o), value));
+        },
+    );
 }
 
 /**

@@ -40,6 +40,11 @@ function memberAndType(schema: ReflectionClass<any>, path: string): { type: Type
 }
 
 function serializeFilterValue(schema: ReflectionClass<any>, path: string, value: any, use: Serializer): any {
+    //MongoDB has no `undefined`: a filter for an unset field is written as null,
+    //and BSON omits an undefined property entirely, which would match every
+    //document rather than only those missing the field.
+    if (value === undefined) return null;
+
     const { type, parentTypes } = memberAndType(schema, path);
     return serializeProperty(value, type, use, parentTypes);
 }
