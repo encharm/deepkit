@@ -53,6 +53,13 @@ export class BSONBuildState {
     readonly depth: number;
 
     /** Path segments for error messages */
+    /**
+     * Whether the built type reads a reference or back reference. Only then does
+     * serializing need to change the global unpopulated-check mode, which costs
+     * a try/finally per call.
+     */
+    hasRelations = false;
+
     readonly pathSegments: string[];
 
     /** Naming strategy for property name transformation */

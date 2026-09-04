@@ -31,6 +31,7 @@ import {
     TypeTupleMember,
     TypeUnion,
     UNION_LITERAL_THRESHOLD,
+    UnpopulatedCheck,
     binaryBigIntAnnotation,
     binaryTypes,
     detectDiscriminator,
@@ -39,6 +40,7 @@ import {
     hasCircularReference,
     hasDefaultValue,
     isAllLiterals,
+    isBackReferenceType,
     isBinaryBigIntType,
     isCustomTypeClass,
     isGlobalTypeClass,
@@ -51,6 +53,8 @@ import {
     resolveReceiveType,
     resolveTypeMembers,
     stringifyType,
+    typeSettings,
+    unpopulatedSymbol,
 } from '@deepkit/type';
 import type { DiscriminatorInfo } from '@deepkit/type';
 import { TypeNumberBrand } from '@deepkit/type-spec';
@@ -208,16 +212,36 @@ function createSerializer(type: Type): (data: any) => SerializeResult {
 
     // Return a wrapper that manages the shared buffer
     // Fresh tuple is faster than pre-allocated due to V8 escape analysis
+    if (!ctx.hasRelations) {
+        //no relation to read, so no need to touch the global unpopulated mode —
+        //this is the hot path and a try/finally per call is measurable
+        return (data: any): SerializeResult => {
+            try {
+                return [sharedBuffer, serializeFn(sharedBuffer, sharedView, 0, data)];
+            } catch (e) {
+                // Clear stale entries from circular reference tracking on error.
+                // Without this, a throw mid-serialization leaves the global Set
+                // with stale entries, causing false-positive cycle detection on
+                // subsequent calls.
+                if (globalCircularSet) globalCircularSet.clear();
+                throw e;
+            }
+        };
+    }
+
     return (data: any): SerializeResult => {
+        //reading an unpopulated reference throws by default, which is right for
+        //application code but not here: an entity that was not joined still has
+        //to serialize, writing the foreign key it does have
+        const previousCheck = typeSettings.unpopulatedCheck;
+        typeSettings.unpopulatedCheck = UnpopulatedCheck.ReturnSymbol;
         try {
             return [sharedBuffer, serializeFn(sharedBuffer, sharedView, 0, data)];
         } catch (e) {
-            // Clear stale entries from circular reference tracking on error.
-            // Without this, a throw mid-serialization leaves the global Set
-            // with stale entries, causing false-positive cycle detection on
-            // subsequent calls.
             if (globalCircularSet) globalCircularSet.clear();
             throw e;
+        } finally {
+            typeSettings.unpopulatedCheck = previousCheck;
         }
     };
 }
@@ -344,33 +368,44 @@ function serializeObjectProperties(
         const propValue = b.get(data, jsPropName);
         const propCtx = ctx.forProperty(bsonPropName);
 
-        // Check if property is optional (handles both `prop?: T` and `prop: T | undefined`)
-        if (isOptional(prop)) {
-            // Undefined semantics: check if property exists in object
-            // - Property not present (key not in obj): skip entirely
-            // - Property present but undefined/null: serialize as null
-            // - Property present with value: serialize value
-            const propExists = b.call((obj: any, key: string) => key in obj, data, b.lit(jsPropName));
-            b.if_(propExists, () => {
-                b.if_(
-                    b.isNullish(propValue),
-                    () => {
-                        // Property exists but is undefined/null → serialize as null
-                        serializeNull(b, buffer, view, o, bsonPropName);
-                    },
-                    () => {
-                        serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
-                    },
-                );
-            });
-        } else if (hasDefaultValue(prop)) {
-            // Non-optional with default: skip if value is undefined/null.
-            // The deserializer will apply the default value.
-            b.if_(b.not(b.isNullish(propValue)), () => {
+        //a relation that was not joined reads as the sentinel; there is nothing
+        //to write for it, and the document must not carry a placeholder
+        const isRelation = isReferenceType(propType) || isBackReferenceType(prop) || isBackReferenceType(propType);
+        const writeProperty = () => {
+            // Check if property is optional (handles both `prop?: T` and `prop: T | undefined`)
+            if (isOptional(prop)) {
+                // Undefined semantics: check if property exists in object
+                // - Property not present (key not in obj): skip entirely
+                // - Property present but undefined/null: serialize as null
+                // - Property present with value: serialize value
+                const propExists = b.call((obj: any, key: string) => key in obj, data, b.lit(jsPropName));
+                b.if_(propExists, () => {
+                    b.if_(
+                        b.isNullish(propValue),
+                        () => {
+                            // Property exists but is undefined/null → serialize as null
+                            serializeNull(b, buffer, view, o, bsonPropName);
+                        },
+                        () => {
+                            serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
+                        },
+                    );
+                });
+            } else if (hasDefaultValue(prop)) {
+                // Non-optional with default: skip if value is undefined/null.
+                // The deserializer will apply the default value.
+                b.if_(b.not(b.isNullish(propValue)), () => {
+                    serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
+                });
+            } else {
                 serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
-            });
+            }
+        };
+
+        if (isRelation) {
+            b.if_(b.neq(propValue, b.lit(unpopulatedSymbol)), writeProperty);
         } else {
-            serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
+            writeProperty();
         }
     }
 

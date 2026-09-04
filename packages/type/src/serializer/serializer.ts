@@ -194,7 +194,7 @@ export class Serializer {
      * @returns A type guard function
      */
     buildTypeGuard<T>(type: Type, withLoose: boolean = true): Guard<T> {
-        return fn(
+        const compiled = fn(
             arg<any>(),
             arg<{ errors?: ValidationErrorItem[] }>(),
             //callers validating a single value name it, so its errors read
@@ -219,6 +219,8 @@ export class Serializer {
                 return result as Ref<boolean>;
             },
         ) as Guard<T>;
+
+        return withUnpopulatedMode(compiled, UnpopulatedCheck.ReturnSymbol) as Guard<T>;
     }
 
     /**
@@ -395,6 +397,25 @@ export function getSerializeFunction(
 }
 
 /**
+ * Run `compiled` with a different unpopulated-reference mode, always restoring
+ * the previous one.
+ *
+ * Reading an unpopulated reference throws by default, which is right for
+ * application code but not for machinery that walks an entity's properties.
+ */
+function withUnpopulatedMode<T extends Function>(compiled: T, mode: UnpopulatedCheck): T {
+    return ((...args: any[]) => {
+        const previous = typeSettings.unpopulatedCheck;
+        typeSettings.unpopulatedCheck = mode;
+        try {
+            return (compiled as any)(...args);
+        } finally {
+            typeSettings.unpopulatedCheck = previous;
+        }
+    }) as unknown as T;
+}
+
+/**
  * Create a serializer function for a type (not cached).
  *
  * @param type - The type to serialize
@@ -449,15 +470,7 @@ export function createSerializeFunction(
     //see undefined. Either way the previous mode is always restored.
     const mode = direction === 'serialize' ? UnpopulatedCheck.ReturnSymbol : UnpopulatedCheck.None;
 
-    return ((data: any, options?: SerializationOptions) => {
-        const previous = typeSettings.unpopulatedCheck;
-        typeSettings.unpopulatedCheck = mode;
-        try {
-            return compiled(data, options);
-        } finally {
-            typeSettings.unpopulatedCheck = previous;
-        }
-    }) as SerializeFunction;
+    return withUnpopulatedMode(compiled, mode);
 }
 
 /**

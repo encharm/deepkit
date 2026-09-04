@@ -4416,6 +4416,15 @@ export function registerTypeGuards(serializer: Serializer): void {
     reg.registerBinary(guardTypedArrayFast);
 
     // Decorators
+    //an unpopulated relation reads as the sentinel, which is not the declared
+    //type but is a valid state for an entity that was not joined
+    reg.addPreHook((type, input, b, ctx, next) => {
+        if (!isBackReferenceType(type) && !isReferenceType(type)) return next();
+        const result = b.var_(b.lit(true));
+        b.if_(b.neq(input, b.lit(unpopulatedSymbol)), () => b.setVar(result, next() as Ref<boolean>));
+        return b.getVar(result);
+    });
+
     reg.addDecorator(isReferenceType, guardReferenceFast);
     reg.addDecorator(isBrandedNumber, guardNumberBrandedFast);
     reg.addDecorator(isNanoIdType, guardNanoIdFast);
