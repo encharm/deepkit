@@ -470,7 +470,7 @@ export const deserializeNumber: JsonTypeHandler = (type, input, b, state) => {
     });
     const canCoerceBoolean = b.and(isLoose, b.isType(input, 'boolean'));
 
-    const coerced = b.ternary(
+    let coerced: Ref<any> = b.ternary(
         b.isType(input, 'number'),
         input,
         b.ternary(
@@ -479,6 +479,14 @@ export const deserializeNumber: JsonTypeHandler = (type, input, b, state) => {
             b.ternary(b.getVar(canCoerceString), b.call(Number, input), input),
         ),
     );
+
+    //a value that is neither a number nor coercible to one is not a number, and
+    //passing it through would put e.g. a filter object where a number belongs
+    const result = b.var_<any>(coerced);
+    b.if_(b.and(b.not(b.isType(b.getVar(result), 'number')), b.not(b.isNullish(b.getVar(result)))), () => {
+        state.throw_(type, b.getVar(result));
+    });
+    coerced = b.getVar(result);
 
     // Apply brand constraints
     const isNumber = b.isType(coerced, 'number');
@@ -790,7 +798,7 @@ export const handleTuple: JsonTypeHandler = (type, input, b, state) => {
         // No rest element
         for (let i = 0; i < tupleType.types.length; i++) {
             const member = tupleType.types[i];
-            b.push(result, state.build(member.type, input.at(i)));
+            b.push(result, state.buildMember(member, member.type, input.at(i)));
         }
     } else {
         // Has rest element
@@ -800,7 +808,7 @@ export const handleTuple: JsonTypeHandler = (type, input, b, state) => {
         // Elements before rest
         for (let i = 0; i < beforeRest; i++) {
             const member = tupleType.types[i];
-            b.push(result, state.build(member.type, input.at(i)));
+            b.push(result, state.buildMember(member, member.type, input.at(i)));
         }
 
         // Rest elements
