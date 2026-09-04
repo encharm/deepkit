@@ -8,12 +8,10 @@
  * You should have received a copy of the MIT License along with this program.
  */
 import {
-    BsonStreamReader,
-    Writer,
+    BSONStreamReader,
     deserializeBSONWithoutOptimiser,
     getBSONDeserializer,
     getBSONSerializer,
-    getBSONSizer,
 } from '@deepkit/bson';
 import { ClassType, bufferConcat, createBuffer } from '@deepkit/core';
 import {
@@ -45,12 +43,66 @@ export interface BodyDecoder<T> {
 
 export function createBodyDecoder<T>(type?: ReceiveType<T>): BodyDecoder<T> {
     type = resolveReceiveType(type);
-    const deserialize = getBSONDeserializer<T>(undefined, type);
+    const deserialize = getBSONDeserializer<T>(type);
     const fn = (buffer: Uint8Array, offset: number) => {
         return deserialize(buffer, offset);
     };
     fn.type = type;
     return fn;
+}
+
+/**
+ * Minimal little-endian byte writer used to assemble RPC message frames.
+ *
+ * Replaces the `Writer` that `@deepkit/bson` exported before the BSON rewrite.
+ * The BSON serializer no longer writes into a caller-provided writer, so RPC
+ * owns this and copies already-serialized BSON bodies in via `writeBuffer`.
+ */
+export class Writer {
+    constructor(
+        public buffer: Uint8Array,
+        public offset: number = 0,
+    ) {}
+
+    writeByte(v: number) {
+        this.buffer[this.offset++] = v;
+    }
+
+    writeUint32(v: number) {
+        this.buffer[this.offset++] = v & 0xff;
+        this.buffer[this.offset++] = (v >> 8) & 0xff;
+        this.buffer[this.offset++] = (v >> 16) & 0xff;
+        this.buffer[this.offset++] = (v >> 24) & 0xff;
+    }
+
+    writeNull() {
+        this.writeByte(0);
+    }
+
+    writeAsciiString(str: string) {
+        for (let i = 0; i < str.length; i++) {
+            this.buffer[this.offset++] = str.charCodeAt(i);
+        }
+    }
+
+    writeBuffer(buffer: Uint8Array, offset: number = 0) {
+        this.buffer.set(offset ? buffer.subarray(offset) : buffer, this.offset);
+        this.offset += buffer.byteLength - offset;
+    }
+}
+
+/**
+ * Serialize a message body to BSON.
+ *
+ * `getBSONSerializer` returns `[sharedBuffer, size]` where the buffer is a
+ * globally shared scratch buffer, reused by every serializer. It is only valid
+ * until the next serialize call, so the bytes must be copied out before another
+ * body is serialized. Callers serialize each body exactly once and keep the
+ * returned copy.
+ */
+function serializeBody(type: Type, body: any): Uint8Array {
+    const [buffer, size] = getBSONSerializer(type)(body);
+    return buffer.slice(0, size);
 }
 
 /*
@@ -183,7 +235,7 @@ export class RpcMessage {
         if (!this.buffer) throw new RpcError('No buffer');
         if (this.composite) throw new RpcError('Composite message can not be read directly');
         // console.log('parseBody raw', deserializeBSONWithoutOptimiser(this.buffer, this.bodyOffset));
-        return getBSONDeserializer<T>(undefined, type)(this.buffer, this.bodyOffset);
+        return getBSONDeserializer<T>(type)(this.buffer, this.bodyOffset);
     }
 
     decodeBody<T>(decoder: BodyDecoder<T>): T {
@@ -282,9 +334,14 @@ export function createRpcCompositeMessage<T>(
 export function serializeBinaryRpcCompositeMessage(message: RpcMessageDefinition): Uint8Array {
     if (!message.composite) throw new RpcError('No messages set');
 
+    //serialize all bodies up front: the BSON serializer reuses one shared
+    //buffer, so each body must be copied out before the next is serialized.
+    const bodies: (Uint8Array | undefined)[] = [];
     let bodySize = 0;
     for (const sub of message.composite) {
-        bodySize += 4 + 1 + (sub.schema && sub.body ? getBSONSizer(undefined, sub.schema)(sub.body) : 0);
+        const body = sub.schema && sub.body ? serializeBody(sub.schema, sub.body) : undefined;
+        bodies.push(body);
+        bodySize += 4 + 1 + (body ? body.byteLength : 0);
     }
 
     //<size> <version> <messageId> <routeType>[routeData] <isComposite> <type> <body...>
@@ -299,14 +356,13 @@ export function serializeBinaryRpcCompositeMessage(message: RpcMessageDefinition
     writer.writeByte(1);
     writer.writeByte(message.type);
 
-    for (const sub of message.composite) {
-        writer.writeUint32(sub.schema && sub.body ? getBSONSizer(undefined, sub.schema)(sub.body) : 0);
-        writer.writeByte(sub.type); //type
+    for (let i = 0; i < message.composite.length; i++) {
+        const body = bodies[i];
+        writer.writeUint32(body ? body.byteLength : 0);
+        writer.writeByte(message.composite[i].type); //type
 
-        if (sub.schema && sub.body) {
-            //BSON object contain already their size at the beginning
-            getBSONSerializer(sub.schema)(sub.body, { writer });
-        }
+        //BSON object contain already their size at the beginning
+        if (body) writer.writeBuffer(body);
     }
 
     return writer.buffer;
@@ -334,9 +390,14 @@ export function serializeBinaryRpcCompositeMessageSourceDest(message: RpcMessage
     if (!message.source) throw new RpcError('No source set');
     if (!message.destination) throw new RpcError('No destination set');
 
+    //serialize all bodies up front: the BSON serializer reuses one shared
+    //buffer, so each body must be copied out before the next is serialized.
+    const bodies: (Uint8Array | undefined)[] = [];
     let bodySize = 0;
     for (const sub of message.composite) {
-        bodySize += 4 + 1 + (sub.schema && sub.body ? getBSONSizer(undefined, sub.schema)(sub.body) : 0);
+        const body = sub.schema && sub.body ? serializeBody(sub.schema, sub.body) : undefined;
+        bodies.push(body);
+        bodySize += 4 + 1 + (body ? body.byteLength : 0);
     }
 
     //<size> <version> <messageId> <routeType>[routeData] <composite> <type> <body...>
@@ -357,14 +418,13 @@ export function serializeBinaryRpcCompositeMessageSourceDest(message: RpcMessage
     writer.writeByte(1); //composite=true
     writer.writeByte(message.type);
 
-    for (const sub of message.composite) {
-        writer.writeUint32(sub.schema && sub.body ? getBSONSizer(undefined, sub.schema)(sub.body) : 0);
-        writer.writeByte(sub.type); //type
+    for (let i = 0; i < message.composite.length; i++) {
+        const body = bodies[i];
+        writer.writeUint32(body ? body.byteLength : 0);
+        writer.writeByte(message.composite[i].type); //type
 
-        if (sub.schema && sub.body) {
-            //BSON object contain already their size at the beginning
-            getBSONSerializer(sub.schema)(sub.body, { writer });
-        }
+        //BSON object contain already their size at the beginning
+        if (body) writer.writeBuffer(body);
     }
 
     return writer.buffer;
@@ -422,7 +482,8 @@ export function serializeBinaryRpcMessage(message: RpcMessageDefinition): Uint8A
 }
 
 export function serializeBinaryRpcMessageSingleBody(message: RpcMessageDefinition): Uint8Array {
-    const bodySize = message.body ? getBSONSizer(undefined, message.body.type)(message.body.body) : 0;
+    const body = message.body ? serializeBody(message.body.type, message.body.body) : undefined;
+    const bodySize = body ? body.byteLength : 0;
     //<size> <version> <messageId> <routeType>[routeData] <composite> <type> <body...>
     const messageSize = 4 + 1 + 4 + 1 + 1 + 1 + bodySize;
 
@@ -435,11 +496,7 @@ export function serializeBinaryRpcMessageSingleBody(message: RpcMessageDefinitio
     writer.writeByte(0); //composite=false
     writer.writeByte(message.type);
 
-    if (message.body) {
-        const offset = writer.offset;
-        const serializer = getBSONSerializer(message.body.type);
-        serializer(message.body.body, { writer });
-    }
+    if (body) writer.writeBuffer(body);
 
     return writer.buffer;
 }
@@ -469,7 +526,8 @@ export function serializeBinaryRpcMessagePeer(message: RpcMessageDefinition): Ui
     if (!message.peerId) throw new RpcError('No peerId set');
     if (!message.source) throw new RpcError('No source set');
 
-    const bodySize = message.body ? getBSONSizer(undefined, message.body.type)(message.body.body) : 0;
+    const body = message.body ? serializeBody(message.body.type, message.body.body) : undefined;
+    const bodySize = body ? body.byteLength : 0;
     //<size> <version> <messageId> <routeType>[routeData] <composite> <type> <body...>
     const messageSize = 4 + 1 + 4 + 1 + (16 + message.peerId.length + 1) + 1 + 1 + bodySize;
 
@@ -488,7 +546,7 @@ export function serializeBinaryRpcMessagePeer(message: RpcMessageDefinition): Ui
     writer.writeByte(0); //composite=false
     writer.writeByte(message.type);
 
-    if (message.body) getBSONSerializer(message.body.type)(message.body.body, { writer });
+    if (body) writer.writeBuffer(body);
 
     return writer.buffer;
 }
@@ -518,7 +576,8 @@ export function serializeBinaryRpcMessageSourceDest(message: RpcMessageDefinitio
     if (!message.source) throw new RpcError('No source set');
     if (!message.destination) throw new RpcError('No destination set');
 
-    const bodySize = message.body ? getBSONSizer(undefined, message.body.type)(message.body.body) : 0;
+    const body = message.body ? serializeBody(message.body.type, message.body.body) : undefined;
+    const bodySize = body ? body.byteLength : 0;
     //<size> <version> <messageId> <routeType>[routeData] <composite> <type> <body...>
     const messageSize = 4 + 1 + 4 + 1 + (16 + 16) + 1 + 1 + bodySize;
 
@@ -538,7 +597,7 @@ export function serializeBinaryRpcMessageSourceDest(message: RpcMessageDefinitio
     writer.writeByte(0); //composite=false
     writer.writeByte(message.type);
 
-    if (message.body) getBSONSerializer(message.body.type)(message.body.body, { writer });
+    if (body) writer.writeBuffer(body);
 
     return writer.buffer;
 }
@@ -577,7 +636,7 @@ export class RpcBinaryMessageReader {
     protected chunks = new Map<number, { loaded: number; buffers: Uint8Array[]; last: number }>();
     protected progress = new Map<number, SingleProgress>();
     protected chunkAcks = new Map<number, (active: boolean) => void>();
-    protected streamReader = new BsonStreamReader(this.gotMessage.bind(this));
+    protected streamReader = new BSONStreamReader(this.gotMessage.bind(this));
     protected lastCleanUpTimeout?: ReturnType<typeof setTimeout>;
     protected chunkTimeout = 60_000; // 60 seconds
 

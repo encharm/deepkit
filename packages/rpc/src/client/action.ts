@@ -10,6 +10,7 @@
 import { BehaviorSubject, Observable, Subject, Subscriber } from 'rxjs';
 import { skip } from 'rxjs/operators';
 
+import { BSONError } from '@deepkit/bson';
 import { ClassType, asyncOperation, toFastProperties } from '@deepkit/core';
 import { ProgressTracker, ProgressTrackerState } from '@deepkit/core-rxjs';
 import {
@@ -223,13 +224,20 @@ function actionProtocolError(reply: RpcMessage, subject: RpcMessageSubject, stat
 function actionProtocolFull(reply: RpcMessage, subject: RpcMessageSubject, state: ActionState) {
     switch (reply.type) {
         case RpcTypes.ResponseActionSimple: {
+            let result: WrappedV;
             try {
-                const result = reply.parseBody<WrappedV>(state.types.resultSchema);
-                resolveAction(state, result.v);
+                result = reply.parseBody<WrappedV>(state.types.resultSchema);
             } catch (error: any) {
-                console.log('parse error, got', reply.parseBody<WrappedV>());
-                throw error;
+                //the server may have replied with strictSerialization disabled, in
+                //which case the body does not match the declared return type. The
+                //client cannot know that, so fall back to an untyped parse.
+                try {
+                    result = reply.parseGenericBody() as WrappedV;
+                } catch {
+                    throw error;
+                }
             }
+            resolveAction(state, result.v);
             subject.release();
             break;
         }
@@ -465,10 +473,12 @@ function actionProtocolFull(reply: RpcMessage, subject: RpcMessageSubject, state
                     // this is important to handle the stop signal.
                     const oldChanged = observableSubject.changed;
                     observableSubject.changed = function (this: ProgressTracker) {
+                        //BSON documents are objects, so the array is wrapped in {v}
+                        //(the same shape every other RPC body uses)
                         subject.send(
                             RpcTypes.ActionObservableProgressNext,
-                            this.value,
-                            typeOf<ProgressTrackerState[]>(),
+                            { v: this.value },
+                            typeOf<{ v: ProgressTrackerState[] }>(),
                         );
                         return oldChanged.apply(this);
                     };
@@ -563,8 +573,9 @@ export class RpcActionClient {
                         actionProtocol(reply, subject, state);
                     });
             } catch (error: any) {
-                // Add action context to serialization errors
-                if (error instanceof ValidationError) {
+                // Add action context to serialization errors. BSON rejects
+                // mistyped arguments with a BSONError, not only ValidationError.
+                if (error instanceof ValidationError || error instanceof BSONError) {
                     error.message = `Argument serialization error for ${state.action}: ${error.message}`;
                 }
                 reject(error);

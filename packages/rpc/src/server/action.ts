@@ -114,7 +114,19 @@ function validV(type: Type, index = 0): boolean {
     return true;
 }
 
-const anyType: Type = { kind: ReflectionKind.any };
+//non-strict mode passes bodies through untyped. BSON documents are objects, so
+//this is an object with an `any` index signature rather than a bare `any`,
+//which has no BSON document representation.
+const anyType: Type = {
+    kind: ReflectionKind.objectLiteral,
+    types: [],
+};
+(anyType as TypeObjectLiteral).types.push({
+    kind: ReflectionKind.indexSignature,
+    parent: anyType as TypeObjectLiteral,
+    index: { kind: ReflectionKind.string },
+    type: { kind: ReflectionKind.any },
+});
 const anyBodyType: Type = {
     kind: ReflectionKind.objectLiteral,
     types: [
@@ -534,7 +546,7 @@ export class RpcServerAction {
                 if (!observable || !(observable.observable instanceof ProgressTracker))
                     return response.error(new RpcError('No observable ProgressTracker to sync found'));
                 response.strictSerialization = observable.types.strictSerialization;
-                observable.observable.next(message.parseBody<ProgressTrackerState[]>());
+                observable.observable.next(message.parseBody<{ v: ProgressTrackerState[] }>().v);
                 break;
             }
         }

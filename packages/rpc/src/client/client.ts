@@ -9,6 +9,7 @@
  */
 import { BehaviorSubject, Subject } from 'rxjs';
 
+import { BSONError } from '@deepkit/bson';
 import { ClassType, DeepkitError, asyncOperation, formatError, sleep } from '@deepkit/core';
 import { ReceiveType, ValidationError, resolveReceiveType } from '@deepkit/type';
 
@@ -314,7 +315,9 @@ export class RpcClientTransporter {
         try {
             this.writer(message, this.writerOptions, this.stats, progress);
         } catch (error: any) {
-            if (error instanceof ValidationError) throw error;
+            //a serialization failure is not a connectivity problem: rethrow it as
+            //itself so callers can add context instead of reporting the client offline
+            if (error instanceof ValidationError || error instanceof BSONError) throw error;
             throw new OfflineError(error, { cause: error });
         }
     }

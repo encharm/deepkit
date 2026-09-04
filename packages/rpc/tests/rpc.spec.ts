@@ -1,6 +1,5 @@
 import { expect, test } from '@jest/globals';
 
-import { Writer } from '@deepkit/bson';
 import { typeOf } from '@deepkit/type';
 
 import { DirectClient } from '../src/client/client-direct.js';
@@ -11,6 +10,7 @@ import {
     RpcBinaryMessageReader,
     RpcMessage,
     RpcMessageRouteType,
+    Writer,
     createRpcCompositeMessage,
     createRpcCompositeMessageSourceDest,
     createRpcMessage,
