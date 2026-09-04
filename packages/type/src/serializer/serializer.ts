@@ -428,6 +428,9 @@ export function createSerializeFunction(
                 {
                     namingStrategy,
                     buildOptions,
+                    //`path` names the value being converted, so its errors read
+                    //`page(type): ...` rather than `(type): ...`
+                    pathSegments: path ? [path] : undefined,
                     //a caller serializing one property in isolation can supply the
                     //chain it would have had inside its entity
                     parentTypes: buildOptions?.parentTypes ? [...buildOptions.parentTypes] : undefined,

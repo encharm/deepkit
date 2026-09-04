@@ -763,7 +763,7 @@ test('unions', async () => {
     expect(invalidPageResponse.errors[0].code).toEqual('type');
     expect(invalidPageResponse.errors[0].path).toEqual('page');
     // Error message should indicate conversion failure for the invalid value
-    expect(invalidPageResponse.errors[0].message).toContain('Cannot convert asdasdc');
+    expect(invalidPageResponse.errors[0].message).toContain('Cannot convert string \"asdasdc\"');
 });
 
 test('router dotToUrlPath', () => {

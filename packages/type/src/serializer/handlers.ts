@@ -45,6 +45,7 @@ import {
     getDeepConstructorProperties,
     getEnumValueIndexMatcher,
     getTypeJitContainer,
+    hasDefaultValue,
     isNullable,
     isOptional,
     isPropertyMemberType,
@@ -434,6 +435,15 @@ export const handlePromise: JsonTypeHandler = (type, input, b, state) => state.b
 // ============================================================================
 // Primitive Deserialize Handlers
 // ============================================================================
+
+export const serializeString: JsonTypeHandler = (type, input, b, state) => {
+    return b.ternary(
+        b.isType(input, 'string'),
+        input,
+        //null and undefined stay as they are; only real values are stringified
+        b.ternary(b.isNullish(input), input, b.call(String, input)),
+    );
+};
 
 export const deserializeString: JsonTypeHandler = (type, input, b, state) => {
     const result = b.var_(input);
@@ -2316,8 +2326,9 @@ export const guardObjectFast: JsonTypeHandler = (type, input, b, state) => {
 export const handleMember: JsonTypeHandler = (type, input, b, state) => {
     const member = type as TypeProperty | TypePropertySignature | TypeParameter;
 
-    //an optional member accepts being absent, which the type it carries does not
-    if (isOptional(member)) {
+    //a member that is optional or has a default accepts being absent, which the
+    //type it carries does not
+    if (isOptional(member) || hasDefaultValue(member)) {
         const result = b.var_<any>(b.lit(undefined));
         b.if_(
             b.neq(input, b.lit(undefined)),
@@ -3607,8 +3618,7 @@ export function isInlineActive(type: Type, serializerName: string): boolean {
 }
 
 export const serializeReference: JsonTypeHandler = (type, input, b, state) => {
-    const classType = type as TypeClass;
-    const clazz = ReflectionClass.from(classType.classType);
+    const clazz = ReflectionClass.from(type as TypeClass | TypeObjectLiteral);
     const pkProperty = clazz.getPrimary();
 
     //`& Inline` asks for the whole object instead of the foreign key. Strip the
@@ -3651,8 +3661,10 @@ export const serializeReference: JsonTypeHandler = (type, input, b, state) => {
  * Deserialize a reference type (FK relationship).
  */
 export const deserializeReference: JsonTypeHandler = (type, input, b, state) => {
-    const classType = type as TypeClass;
-    const clazz = ReflectionClass.from(classType.classType);
+    //a reference can be an objectLiteral as well as a class, and only a class
+    //carries a classType
+    const clazz = ReflectionClass.from(type as TypeClass | TypeObjectLiteral);
+    const classType = clazz.getClassType();
     const pkProperty = clazz.getPrimary();
 
     //mirror the serialize side: an inlined reference arrives as a nested object
@@ -3702,7 +3714,7 @@ export const deserializeReference: JsonTypeHandler = (type, input, b, state) => 
                         b.call(
                             createReferenceFromPk,
                             state.build(pkType, pkValue),
-                            b.lit(classType.classType),
+                            b.lit(classType),
                             b.lit(pkName),
                             b.lit(createReference),
                         ),
@@ -3721,7 +3733,7 @@ export const deserializeReference: JsonTypeHandler = (type, input, b, state) => 
                 b.call(
                     createReferenceFromPk,
                     state.build(pkType, input),
-                    b.lit(classType.classType),
+                    b.lit(classType),
                     b.lit(pkName),
                     b.lit(createReference),
                 ),
@@ -3812,8 +3824,7 @@ export const guardReferenceScore: JsonTypeHandler = (type, input, b, state) => {
  * Guard for reference types (fast/boolean).
  */
 export const guardReferenceFast: JsonTypeHandler = (type, input, b, state) => {
-    const classType = type as TypeClass;
-    const clazz = ReflectionClass.from(classType.classType);
+    const clazz = ReflectionClass.from(type as TypeClass | TypeObjectLiteral);
 
     if (!clazz.hasPrimary()) {
         return guardObjectFast(type, input, b, state);
@@ -4290,6 +4301,10 @@ export function registerDefaultHandlers(serializer: Serializer): void {
     deserializeRegistry.register(ReflectionKind.tuple, handleTuple);
 
     // Objects and classes
+    //a declared string must come out as one, so a value of another type is
+    //stringified rather than passed through
+    serializeRegistry.register(ReflectionKind.string, serializeString);
+
     //member kinds wrap a type: callers legitimately hand one of these straight to
     //getSerializeFunction (an HTTP route parameter, or resolvePath's result), so
     //build the type they carry rather than passing the value through untouched.
@@ -4410,7 +4425,11 @@ export function registerTypeGuards(serializer: Serializer): void {
             type.kind === ReflectionKind.union ||
             type.kind === ReflectionKind.array ||
             type.kind === ReflectionKind.tuple ||
-            type.kind === ReflectionKind.objectLiteral
+            type.kind === ReflectionKind.objectLiteral ||
+            //member kinds delegate to the type they carry, which reports for them
+            type.kind === ReflectionKind.property ||
+            type.kind === ReflectionKind.propertySignature ||
+            type.kind === ReflectionKind.parameter
         ) {
             return next();
         }
