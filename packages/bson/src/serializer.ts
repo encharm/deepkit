@@ -560,13 +560,19 @@ function serializeValue(
     value: Ref<any>,
     ctx: BSONBuildState,
 ): void {
+    //A value may arrive wrapped with its type (@deepkit/mongo does this so an
+    //`any` position keeps MongoId/UUID information). Where the type is known the
+    //wrapper adds nothing, so unwrap it — but only for the types mongo wraps,
+    //since an unwrap call on every property is measurable on the hot path.
+    const unwrap = (v: Ref<any>) => b.call((x: any) => (x instanceof ValueWithBSONSerializer ? x.value : x), v);
+
     // Check for special annotated string types first (UUID, MongoId)
     if (isUUIDType(type)) {
-        serializeUUID(b, buffer, view, o, name, value);
+        serializeUUID(b, buffer, view, o, name, unwrap(value));
         return;
     }
     if (isMongoIdType(type)) {
-        serializeMongoId(b, buffer, view, o, name, value);
+        serializeMongoId(b, buffer, view, o, name, unwrap(value));
         return;
     }
 
