@@ -161,6 +161,8 @@ function runHandlers(handlers: JsonTypeHandler[], type: Type, input: Ref, b: Bui
  * For sql databases, objects will be serialised as JSON string.
  */
 const serializeSqlObjectLiteral: JsonTypeHandler = (type, input, b, state) => {
+    //a database column always stores the foreign key, `& Inline` or not — it
+    //only changes how a reference is serialized for transport
     if (isReferenceType(type) || isBackReferenceType(type)) {
         return serializeReferencedType(type, input, b, state);
     }

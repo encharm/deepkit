@@ -70,6 +70,15 @@ export interface BuildOptions {
      * When defined, group filtering is done at build time.
      */
     groupsExcludeBaked?: string[];
+
+    /**
+     * Types enclosing the one being built, outermost first.
+     *
+     * Set this when serializing a single property in isolation — a database
+     * filter value, say — so that handlers depending on the value's position
+     * see the same chain they would when the whole entity is serialized.
+     */
+    parentTypes?: Type[];
 }
 
 /**

@@ -309,6 +309,12 @@ export function computeBuildOptionsKey(buildOptions?: BuildOptions): string {
         parts.push(`GX:${sorted.join(',')}`);
     }
 
+    //the parent chain changes the generated code, so it must not share a cache
+    //entry with a build that had a different one
+    if (buildOptions.parentTypes !== undefined) {
+        parts.push(`P:${buildOptions.parentTypes.map(t => ReflectionKind[t.kind]).join('>')}`);
+    }
+
     return parts.length > 0 ? '_' + parts.join('_') : '';
 }
 
@@ -409,7 +415,13 @@ export function createSerializeFunction(
                 b,
                 optionsRef,
                 registry,
-                { namingStrategy, buildOptions },
+                {
+                    namingStrategy,
+                    buildOptions,
+                    //a caller serializing one property in isolation can supply the
+                    //chain it would have had inside its entity
+                    parentTypes: buildOptions?.parentTypes ? [...buildOptions.parentTypes] : undefined,
+                },
             );
 
             return state.build(type, data);

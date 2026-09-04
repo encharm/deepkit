@@ -185,7 +185,10 @@ export function convertQueryFilter<T, K extends keyof T, Q extends FilterQuery<T
             }
         }
 
-        if (fieldValue !== undefined) {
+        //`{deletedAt: undefined}` is a meaningful filter (match rows where the
+        //field is unset), so keep a key the caller actually provided even when
+        //it converts to undefined; only drop keys that produced no value.
+        if (fieldValue !== undefined || key in filter) {
             result[targetI] = fieldValue;
         }
     }

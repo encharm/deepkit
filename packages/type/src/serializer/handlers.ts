@@ -43,6 +43,7 @@ import {
     binaryTypes,
     getDeepConstructorProperties,
     getEnumValueIndexMatcher,
+    getTypeJitContainer,
     isNullable,
     isOptional,
     isPropertyMemberType,
@@ -52,10 +53,12 @@ import {
 } from '../reflection/type.js';
 import {
     BinaryBigIntType,
+    backReferenceAnnotation,
     binaryBigIntAnnotation,
     embeddedAnnotation,
     excludedAnnotation,
     groupAnnotation,
+    inlineAnnotation,
     isBackReferenceType,
     isMongoIdType,
     isNanoIdType,
@@ -3546,10 +3549,53 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
 /**
  * Serialize a reference type (FK relationship).
  */
+/**
+ * Whether `& Inline` asks this serializer to write a reference as a nested
+ * object rather than just its foreign key.
+ *
+ * `only` limits inlining to the named serializers, `except` disables it for
+ * them; with neither, `& Inline` applies to all.
+ */
+/**
+ * A copy of `type` with the reference annotations removed, so building it takes
+ * the plain object path rather than re-entering the reference handler.
+ *
+ * The copy is cached on the original, both so repeated builds reuse one type
+ * (the build context tracks recursion by identity) and so its own JIT cache is
+ * shared.
+ */
+function withoutReferenceAnnotation(type: Type): Type {
+    const jit = getTypeJitContainer(type);
+    if (jit.__inlineType) return jit.__inlineType;
+
+    const copy: Type = { ...type } as Type;
+    copy.annotations = { ...(type.annotations || {}) };
+    referenceAnnotation.replace(copy.annotations, []);
+    backReferenceAnnotation.replace(copy.annotations, []);
+    inlineAnnotation.replace(copy.annotations, []);
+    return (jit.__inlineType = copy);
+}
+
+export function isInlineActive(type: Type, serializerName: string): boolean {
+    const options = inlineAnnotation.getFirst(type);
+    if (!options) return false;
+    if (options.only) return options.only.includes(serializerName);
+    if (options.except) return !options.except.includes(serializerName);
+    return true;
+}
+
 export const serializeReference: JsonTypeHandler = (type, input, b, state) => {
     const classType = type as TypeClass;
     const clazz = ReflectionClass.from(classType.classType);
     const pkProperty = clazz.getPrimary();
+
+    //`& Inline` asks for the whole object instead of the foreign key. Strip the
+    //reference annotation first: the inlined object is built through the normal
+    //object path, which the build context can extract for a self-referencing
+    //entity instead of inlining it forever.
+    if (isInlineActive(type, state.serializer.name)) {
+        return state.build(withoutReferenceAnnotation(type), input);
+    }
 
     if (!pkProperty) {
         // No primary key - fall back to full serialization
@@ -3586,6 +3632,11 @@ export const deserializeReference: JsonTypeHandler = (type, input, b, state) => 
     const classType = type as TypeClass;
     const clazz = ReflectionClass.from(classType.classType);
     const pkProperty = clazz.getPrimary();
+
+    //mirror the serialize side: an inlined reference arrives as a nested object
+    if (isInlineActive(type, state.serializer.name)) {
+        return state.build(withoutReferenceAnnotation(type), input);
+    }
 
     if (!pkProperty) {
         // No primary key - fall back to full deserialization

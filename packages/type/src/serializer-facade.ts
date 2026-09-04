@@ -261,6 +261,24 @@ export function serialize<T>(
 /**
  * Same as serialize but returns a ready to use function. Used to improve performance.
  */
+/**
+ * Serialize one value as if it sat at `parentTypes` inside a larger type.
+ *
+ * `serialize` on a property's type alone loses where that property lives, and
+ * handlers that depend on position rather than shape then behave differently
+ * than they would for the whole object. @deepkit/sql needs this so a filter
+ * value encodes exactly like the column it is compared against.
+ */
+export function serializeProperty(
+    data: any,
+    type: Type,
+    serializerToUse: Serializer = serializer,
+    parentTypes: Type[] = [],
+): any {
+    const fn = getSerializeFunction(type, serializerToUse.serializeRegistry, undefined, '', { parentTypes });
+    return fn(data);
+}
+
 export function serializeFunction<T>(
     serializerToUse: Serializer = serializer,
     namingStrategy?: NamingStrategy,
