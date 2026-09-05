@@ -92,20 +92,18 @@ services:
 
   # FTP for packages/filesystem-ftp tests
   ftp:
-    image: fauria/vsftpd
-    platform: linux/amd64
+    # delfer/alpine-ftp-server publishes an arm64 image; fauria/vsftpd is amd64
+    # only and its vsftpd binary crashes under emulation on Apple silicon
+    image: delfer/alpine-ftp-server
     ports:
       - '10021:21'
       - '10100-10109:10100-10109'
     environment:
-      FTP_USER: user
-      FTP_PASS: '123'
-      PASV_MIN_PORT: 10100
-      PASV_MAX_PORT: 10109
-      #vsftpd sends this verbatim in the PASV reply, and the protocol wants an
-      #IP there — "localhost" is not resolved (pasv_addr_resolve=NO) and the
-      #client cannot parse it, so the data connection dies immediately.
-      PASV_ADDRESS: 127.0.0.1
+      #the third field is the user's home; the image chroots to it
+      USERS: 'user|123|/ftp/user'
+      ADDRESS: localhost
+      MIN_PORT: 10100
+      MAX_PORT: 10109
 
   # MinIO (S3-compatible) for packages/filesystem-aws-s3 tests
   minio:

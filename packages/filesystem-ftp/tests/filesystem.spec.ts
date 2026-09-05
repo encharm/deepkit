@@ -9,6 +9,7 @@ import { FilesystemFtpAdapter } from '../src/ftp-adapter.js';
 const FTP_HOST = process.env.FTP_HOST || 'localhost';
 const FTP_PORT = parseInt(process.env.FTP_PORT || '10021', 10);
 const FTP_USER = process.env.FTP_USER || 'user';
+const FTP_ROOT = process.env.FTP_ROOT || '/ftp/user';
 const FTP_PASSWORD = process.env.FTP_PASSWORD || '123';
 
 setAdapterFactory(async () => {
@@ -17,6 +18,9 @@ setAdapterFactory(async () => {
         port: FTP_PORT,
         user: FTP_USER,
         password: FTP_PASSWORD,
+        //the test server does not chroot, so scope the tests to a directory of
+        //their own rather than the container filesystem
+        root: FTP_ROOT,
     });
 
     //reset all files

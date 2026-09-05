@@ -173,6 +173,12 @@ export class FilesystemFtpAdapter implements FilesystemAdapter {
     async deleteDirectory(path: string, reporter: Reporter): Promise<void> {
         await this.ensureConnected();
         const remotePath = this.getRemotePath(path);
+        //the root itself cannot be removed, only emptied
+        if (path === '/') {
+            await this.client.cd(remotePath);
+            await this.client.clearWorkingDir();
+            return;
+        }
         await this.client.removeDir(remotePath);
     }
 
