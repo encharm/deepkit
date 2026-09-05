@@ -3252,8 +3252,14 @@ export class ReflectionTransformer implements CustomTransformer {
             return !!omegaDeclaration;
         }
 
+        //A class carries its reflection as a static __type on the class itself, so
+        //re-exporting the class already carries it and there is no __Ω binding to
+        //re-export. Naming one produces an export the defining module does not
+        //have, which fails to link at import time.
+        if (isClassDeclaration(resolvedDeclaration)) return false;
+
         // For .ts files, check if the resolved declaration is a type that will generate __Ω
-        if (isInterfaceDeclaration(resolvedDeclaration) || isTypeAliasDeclaration(resolvedDeclaration) || isEnumDeclaration(resolvedDeclaration) || isClassDeclaration(resolvedDeclaration)) {
+        if (isInterfaceDeclaration(resolvedDeclaration) || isTypeAliasDeclaration(resolvedDeclaration) || isEnumDeclaration(resolvedDeclaration)) {
             // Check if the source file has reflection enabled
             const reflection = this.getReflectionConfig(declarationSourceFile);
             if (reflection.mode === 'never') return false;
