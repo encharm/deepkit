@@ -122,6 +122,7 @@ test('mysql', async () => {
         [typeOf<User>(), typeOf<Post>()],
         new MySQLDatabaseAdapter({
             host: '127.0.0.1',
+            port: MYSQL_PORT,
             user: 'root',
             database: 'default',
             password: process.env.MYSQL_PW,
