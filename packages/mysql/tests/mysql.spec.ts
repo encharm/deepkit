@@ -11,6 +11,8 @@ import { databaseFactory } from './factory.js';
 test('connection MySQLConnectionPool', async () => {
     const pool = createPool({
         host: '127.0.0.1',
+        //docker compose exposes mysql on an alternative port to avoid conflicts
+        port: parseInt(process.env.MYSQL_PORT || '13306', 10),
         user: 'root',
         database: 'default',
         password: process.env.MYSQL_PW,

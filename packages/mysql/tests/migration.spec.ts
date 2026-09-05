@@ -6,6 +6,9 @@ import { AutoIncrement, Entity, MySQL, PrimaryKey, Reference, UUID, Unique, floa
 
 import { MySQLDatabaseAdapter } from '../src/mysql-adapter.js';
 
+//docker compose exposes mysql on an alternative port to avoid conflicts
+const MYSQL_PORT = parseInt(process.env.MYSQL_PORT || '13306', 10);
+
 test('mysql custom type', async () => {
     class post {
         id: number & AutoIncrement & PrimaryKey = 0;
@@ -13,7 +16,7 @@ test('mysql custom type', async () => {
         content: string = '';
     }
 
-    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', user: 'root', database: 'default', password: process.env.MYSQL_PW });
+    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', port: MYSQL_PORT, user: 'root', database: 'default', password: process.env.MYSQL_PW });
     const [postTable] = adapter.platform.createTables(DatabaseEntityRegistry.from([post]));
 
     expect(postTable.getColumn('id').isNotNull).toBe(true);
@@ -30,7 +33,7 @@ test('uuid required', async () => {
         id: UUID & PrimaryKey = '';
     }
 
-    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', user: 'root', database: 'default', password: process.env.MYSQL_PW });
+    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', port: MYSQL_PORT, user: 'root', database: 'default', password: process.env.MYSQL_PW });
     const [postTable] = adapter.platform.createTables(DatabaseEntityRegistry.from([post]));
 
     expect(postTable.getColumn('id').isNotNull).toBe(true);
@@ -50,7 +53,7 @@ test('default expression', async () => {
         opt?: boolean;
     }
 
-    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', user: 'root', database: 'default', password: process.env.MYSQL_PW });
+    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', port: MYSQL_PORT, user: 'root', database: 'default', password: process.env.MYSQL_PW });
     const [postTable] = adapter.platform.createTables(DatabaseEntityRegistry.from([post]));
 
     expect(postTable.getColumn('str').defaultValue).toBe('abc');
@@ -77,7 +80,7 @@ test('mysql numbers', async () => {
         default: number = 0;
     }
 
-    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', user: 'root', database: 'default', password: process.env.MYSQL_PW });
+    const adapter = new MySQLDatabaseAdapter({ host: '127.0.0.1', port: MYSQL_PORT, user: 'root', database: 'default', password: process.env.MYSQL_PW });
     const [postTable] = adapter.platform.createTables(DatabaseEntityRegistry.from([post]));
 
     const DDL = await schemaMigrationRoundTrip([post], adapter);
