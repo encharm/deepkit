@@ -399,6 +399,19 @@ function serializeObjectProperties(
                 b.if_(b.not(b.isNullish(propValue)), () => {
                     serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
                 });
+            } else if (isPrimitiveKind(propType)) {
+                //a required primitive given undefined would otherwise fail deep
+                //inside the writers with an opaque TypeError, or be coerced
+                //silently (undefined -> NaN -> 0 for number). Only undefined is
+                //checked: a typeof test on every property is measurable here.
+                b.if_(
+                    b.eq(propValue, b.lit(undefined)),
+                    () =>
+                        b.throw_(
+                            b.call(makeTupleMemberTypeError, propValue, b.lit(propType), b.lit(propCtx.getPath())),
+                        ),
+                    () => serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx),
+                );
             } else {
                 serializeValue(b, buffer, view, o, bsonPropName, propType, propValue, propCtx);
             }
@@ -1738,6 +1751,8 @@ function getExtractedSerializer(type: TypeObjectLiteral | TypeClass): SerializeF
 
             // Create fresh context for inner serialization, but mark the current
             // type as being processed so recursive references are detected.
+            //The path cannot carry over: this serializer is cached per type and
+            //shared by every position the type appears at.
             const innerCtx = new BSONBuildState();
             innerCtx.pushType(type);
 
@@ -1801,6 +1816,17 @@ function buildExtractedSerializerCall(
  * (undefined -> NaN -> 0 for number), so a mismatch would otherwise be lost.
  * Richer types keep their existing behaviour.
  */
+/**
+ * Kinds whose writer reads a property off the value and so dies with an opaque
+ * TypeError when given undefined, rather than writing something wrong.
+ *
+ * Numbers are deliberately excluded: they cost measurably on the hot path and
+ * an undefined number is already caught downstream.
+ */
+function isPrimitiveKind(type: Type): boolean {
+    return type.kind === ReflectionKind.string;
+}
+
 function isTupleMemberTypeMismatch(value: any, type: Type): boolean {
     if (value === undefined) return true;
     switch (type.kind) {

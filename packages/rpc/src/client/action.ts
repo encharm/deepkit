@@ -18,6 +18,7 @@ import {
     Type,
     TypeObjectLiteral,
     ValidationError,
+    ValidationErrorItem,
     assertType,
     deserializeType,
     typeOf,
@@ -573,8 +574,19 @@ export class RpcActionClient {
                         actionProtocol(reply, subject, state);
                     });
             } catch (error: any) {
-                // Add action context to serialization errors. BSON rejects
-                // mistyped arguments with a BSONError, not only ValidationError.
+                //BSON rejects a mistyped argument with a BSONError carrying the
+                //path it failed at. That is a validation failure from the
+                //caller's point of view, so report it as one.
+                if (error instanceof BSONError) {
+                    const match = /^([^(]*)\(([^)]*)\): (.*)$/.exec(error.message.split('\n')[0]);
+                    if (match) {
+                        const validation = new ValidationError([new ValidationErrorItem(match[1], match[2], match[3])]);
+                        validation.message = `${state.action}: ${validation.message}`;
+                        reject(validation);
+                        return;
+                    }
+                }
+                // Add action context to serialization errors.
                 if (error instanceof ValidationError || error instanceof BSONError) {
                     error.message = `Argument serialization error for ${state.action}: ${error.message}`;
                 }
