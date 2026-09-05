@@ -260,8 +260,13 @@ export function assert<T>(
     const jit = getTypeJitContainer(resolved);
 
     // Check if type has validators anywhere in the structure - if so, skip fast path
-    // since fast guards don't run validators
-    const hasValidators = hasValidatorsDeep(resolved);
+    // since fast guards don't run validators.
+    // Cached alongside the guards it selects between: the answer depends only on
+    // the type, and walking the whole tree per call costs more than the guard.
+    let hasValidators = jit.__hasValidators;
+    if (hasValidators === undefined) {
+        hasValidators = jit.__hasValidators = hasValidatorsDeep(resolved);
+    }
 
     if (!hasValidators) {
         // Fast path: use fast type guard (no validators to run)
