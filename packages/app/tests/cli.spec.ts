@@ -122,7 +122,7 @@ For more information on a specific command or topic, type '[command/topic] --hel
     expect(res1.code).toBe(1);
 
     expect(await app(['del-user-by-id', '123'])).toEqual({ code: 0, output: 'Deleted user 123' });
-    expect((await app(['del-user-by-id', 'invalid'])).output).toContain('Invalid value for argument id: invalid. Cannot convert invalid to number');
+    expect((await app(['del-user-by-id', 'invalid'])).output).toContain('Invalid value for argument id: invalid. Cannot convert string \"invalid\" to number');
 });
 
 test('executeCommand 2', async () => {
@@ -143,7 +143,7 @@ test('executeCommand 2', async () => {
 
     expect(await app(['show-user2', 'Peter'])).toEqual({ code: 0, output: 'showUser2 Peter default' });
     expect(await app(['show-user2', 'Peter', '--view', 'json'])).toEqual({ code: 0, output: 'showUser2 Peter json' });
-    expect((await app(['show-user2', 'Peter', '--view', 'invalid'])).output).toContain(`Invalid value for option --view: invalid. Cannot convert invalid to 'default' | 'json'`);
+    expect((await app(['show-user2', 'Peter', '--view', 'invalid'])).output).toContain(`Invalid value for option --view: invalid. Cannot convert string \"invalid\" to 'default' | 'json'`);
 
     expect(await app(['show-users', '--user', 'Peter'])).toEqual({ code: 0, output: 'showUsers Peter' });
     expect(await app(['show-users', '--user', 'Peter', '--user', 'John'])).toEqual({ code: 0, output: 'showUsers Peter,John' });

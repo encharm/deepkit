@@ -551,9 +551,16 @@ export const deserializeBoolean: JsonTypeHandler = (type, input, b, state) => {
     const falsy = b.or(b.eq(input, b.lit('false')), b.or(b.eq(input, b.lit('0')), b.eq(input, b.lit(0))));
 
     b.if_(b.isType(input, 'boolean'), () => b.setVar(result, input));
-    b.if_(b.and(isLoose, b.not(b.isType(input, 'boolean'))), () => {
-        b.if_(truthy, () => b.setVar(result, b.lit(true)));
-        b.if_(falsy, () => b.setVar(result, b.lit(false)));
+    b.if_(b.and(isLoose, b.and(b.not(b.isType(input, 'boolean')), b.not(b.isNullish(input)))), () => {
+        //loose mode always yields a boolean: anything present that is not
+        //recognisably true is false, rather than being passed through as the
+        //original value and failing validation later as "Not a boolean".
+        //null and undefined stay as they are, for optional properties.
+        b.if_(
+            truthy,
+            () => b.setVar(result, b.lit(true)),
+            () => b.setVar(result, b.lit(false)),
+        );
     });
 
     return b.getVar(result);
