@@ -85,16 +85,41 @@ export function getBSONEncoder<T>(receiveType?: ReceiveType<T>) {
 }
 
 /**
- * Shared buffer for untyped serialization (avoids allocation per call).
+ * Shared scratch buffer for untyped serialization (avoids allocation per call).
  */
 let untypedBuffer = new Uint8Array(1024 * 1024); // 1MB initial
 let untypedView = new DataView(untypedBuffer.buffer);
 
+function growUntypedBuffer(needed: number): void {
+    let capacity = untypedBuffer.length;
+    while (capacity < needed) capacity *= 2;
+    untypedBuffer = new Uint8Array(capacity);
+    untypedView = new DataView(untypedBuffer.buffer);
+}
+
 /**
  * Serialize any plain object to BSON without type information.
  * Uses runtime type detection (slower than JIT but works without types).
+ *
+ * Returns a copy, so the result stays valid across later calls.
  */
 export function serializeBSONWithoutOptimiser(data: Record<string, any>): Uint8Array {
-    const size = serializeAnyObjectRuntime(untypedBuffer, untypedView, 0, data);
+    //A document larger than the scratch buffer overflows one of two ways: a
+    //Uint8Array write past the end is dropped silently and shows up only as a
+    //size beyond capacity, while a DataView size backfill throws RangeError
+    //mid-pass. Both mean the same thing — grow and run again. The retry loop
+    //doubles until it fits, so a document of any size serializes.
+    let size = 0;
+    while (true) {
+        try {
+            size = serializeAnyObjectRuntime(untypedBuffer, untypedView, 0, data);
+            if (size <= untypedBuffer.length) break;
+            growUntypedBuffer(size);
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            growUntypedBuffer(untypedBuffer.length * 2);
+        }
+    }
+
     return untypedBuffer.slice(0, size);
 }

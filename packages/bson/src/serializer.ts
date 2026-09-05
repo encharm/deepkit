@@ -82,12 +82,6 @@ for (let i = 0; i < 6; i++) hexTable[65 + i] = 10 + i; // 'A'-'F'
 for (let i = 0; i < 6; i++) hexTable[97 + i] = 10 + i; // 'a'-'f'
 
 /**
- * TextEncoder for UTF-8 string encoding.
- * Using encodeInto() avoids intermediate allocations.
- */
-const textEncoder = new TextEncoder();
-
-/**
  * Check if a number fits in int32 range.
  * Used by JIT to determine whether to use INT or DOUBLE encoding.
  * @internal
@@ -145,10 +139,42 @@ const serializerCache = new WeakMap<Type, (data: any) => SerializeResult>();
 
 /**
  * Shared buffer for serialization (avoids allocation per call).
- * Grows as needed.
  */
 let sharedBuffer = new Uint8Array(1024 * 1024); // 1MB initial
 let sharedView = new DataView(sharedBuffer.buffer);
+
+/**
+ * Run a serialize pass against the shared buffer, growing and retrying if the
+ * document did not fit.
+ *
+ * A document larger than the buffer overflows one of two ways: a Uint8Array
+ * write past the end is dropped silently and shows up only as a returned size
+ * beyond capacity, while a DataView size backfill throws RangeError mid-pass.
+ * Both mean the same thing — grow and run again.
+ */
+function serializeShared(serializeFn: SerializeFn, data: any): SerializeResult {
+    //takes the function and data as plain arguments rather than a closure:
+    //this is the hot path, and a closure allocated per call is measurable
+    while (true) {
+        try {
+            const size = serializeFn(sharedBuffer, sharedView, 0, data);
+            if (size <= sharedBuffer.length) return [sharedBuffer, size];
+            growSharedBuffer(size);
+        } catch (error) {
+            //a DataView size backfill past the end throws instead of being
+            //dropped, so an overflow can surface either way
+            if (!(error instanceof RangeError)) throw error;
+            growSharedBuffer(sharedBuffer.length * 2);
+        }
+    }
+}
+
+function growSharedBuffer(needed: number): void {
+    let capacity = sharedBuffer.length;
+    while (capacity < needed) capacity *= 2;
+    sharedBuffer = new Uint8Array(capacity);
+    sharedView = new DataView(sharedBuffer.buffer);
+}
 
 /**
  * Get or create a BSON serializer for the given type.
@@ -198,7 +224,7 @@ function createSerializer(type: Type): (data: any) => SerializeResult {
     if (type.kind === ReflectionKind.any || type.kind === ReflectionKind.unknown) {
         return (data: any): SerializeResult => {
             assertSerializableObject(data, type);
-            return [sharedBuffer, serializeAnyObjectRuntime(sharedBuffer, sharedView, 0, data)];
+            return serializeShared(serializeAnyObjectRuntime, data);
         };
     }
 
@@ -217,7 +243,7 @@ function createSerializer(type: Type): (data: any) => SerializeResult {
         //this is the hot path and a try/finally per call is measurable
         return (data: any): SerializeResult => {
             try {
-                return [sharedBuffer, serializeFn(sharedBuffer, sharedView, 0, data)];
+                return serializeShared(serializeFn, data);
             } catch (e) {
                 // Clear stale entries from circular reference tracking on error.
                 // Without this, a throw mid-serialization leaves the global Set
@@ -236,7 +262,7 @@ function createSerializer(type: Type): (data: any) => SerializeResult {
         const previousCheck = typeSettings.unpopulatedCheck;
         typeSettings.unpopulatedCheck = UnpopulatedCheck.ReturnSymbol;
         try {
-            return [sharedBuffer, serializeFn(sharedBuffer, sharedView, 0, data)];
+            return serializeShared(serializeFn, data);
         } catch (e) {
             if (globalCircularSet) globalCircularSet.clear();
             throw e;
@@ -304,7 +330,7 @@ function createUnionSerializer(type: TypeUnion): (data: any) => SerializeResult 
         }
 
         try {
-            return [sharedBuffer, memberSerializers[bestIndex].serializeFn(sharedBuffer, sharedView, 0, data)];
+            return serializeShared(memberSerializers[bestIndex].serializeFn, data);
         } catch (e) {
             if (globalCircularSet) globalCircularSet.clear();
             throw e;
@@ -703,12 +729,14 @@ export function serializeAnyPropertyRuntime(
     if (typeofValue === 'string') {
         buffer[offset++] = BSONType.STRING;
         offset = writeName(buffer, offset, name);
-        // Write string length + 1 (for null terminator)
-        const strBytes = textEncoder.encode(value);
-        view.setInt32(offset, strBytes.length + 1, true);
+        //write the bytes straight into the buffer and backfill the length,
+        //rather than encoding into a fresh array and copying it in: this runs
+        //per string property, so the intermediate allocation is the cost
+        const sizeOffset = offset;
         offset += 4;
-        buffer.set(strBytes, offset);
-        offset += strBytes.length;
+        const end = writeStringUTF8(buffer, offset, value);
+        view.setInt32(sizeOffset, end - offset + 1, true);
+        offset = end;
         buffer[offset++] = 0; // null terminator
         return offset;
     }
