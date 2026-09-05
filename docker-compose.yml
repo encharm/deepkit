@@ -93,6 +93,7 @@ services:
   # FTP for packages/filesystem-ftp tests
   ftp:
     image: fauria/vsftpd
+    platform: linux/amd64
     ports:
       - '10021:21'
       - '10100-10109:10100-10109'
@@ -101,7 +102,10 @@ services:
       FTP_PASS: '123'
       PASV_MIN_PORT: 10100
       PASV_MAX_PORT: 10109
-      PASV_ADDRESS: localhost
+      #vsftpd sends this verbatim in the PASV reply, and the protocol wants an
+      #IP there — "localhost" is not resolved (pasv_addr_resolve=NO) and the
+      #client cannot parse it, so the data connection dies immediately.
+      PASV_ADDRESS: 127.0.0.1
 
   # MinIO (S3-compatible) for packages/filesystem-aws-s3 tests
   minio:
