@@ -1,44 +1,31 @@
 # Serializer + BSON rewrite: consumer migration status
 
-*Updated after the feat/next consumer migration session.*
-
 ## Build
 
 `npm run tsc` and `npm run build:esm` both pass — zero errors across all packages.
 
-## Test results
+## Running the tests
 
-| Package | Result |
+Three packages have migrated from Jest to `node:test`, and Jest cannot parse
+their syntax. They are no longer listed as Jest projects:
+
+```
+npm run test        # jest packages (accepts a path, e.g. npm run test packages/orm/)
+npm run test:node   # type, type-compiler, bson
+npm run test:all    # both
+```
+
+## Results
+
+| Runner | Result |
 |---|---|
-| type | 1983 / 1983 |
-| type-compiler | 277 / 277 |
-| bson | 561 / 561 |
-| http | 171 / 171 |
-| framework, broker, injector, core, event, workflow, topsort, logger, template, stopwatch | 529 / 529 |
-| orm | 46 / 46 |
-| rpc | 73 / 73 |
-| sql | 12 / 12 |
-| mongo | 150 / 157 |
-| sqlite | 30 / 32 |
+| `test:node` (type 1983, type-compiler 277, bson 561) | **2821 / 2821** |
+| jest — orm, sql, sqlite, postgres, mysql, mongo | all pass |
+| jest — http, rpc, framework, framework-integration, app, broker | all pass |
+| jest — filesystem, -aws-s3, -google, -sftp, -ftp | all pass |
+| jest — core, injector, event, workflow, topsort, logger, template, stopwatch | all pass |
 
-## Remaining
-
-**mongo (5)**
-- `log:query`, `log:session` — an enum-valued constructor property on a
-  dynamically-built subclass (`LogPlugin.getLogEntity`) comes back `undefined`
-  rather than `0`. Reproducing the same shape by hand works, so the cause is
-  something about how that entity is built at runtime, not enums or inherited
-  constructor properties in general.
-- `errors raw`, `errors query` — expected rejections do not fire.
-- `company:tableLevelInheritanceBasics`.
-
-**sqlite (2)**
-- `joinWith`, `deep join population` — FOREIGN KEY constraint on insert. This
-  fails identically on the pre-migration commit, and the unit-of-work topsort
-  orders correctly in isolation, so look at how the session batches inserts
-  rather than at serialization.
-
-## Root causes fixed (each was breaking many consumers)
+## Root causes fixed
 
 In `@deepkit/type`:
 1. `createSerializeFunction` hardcoded the default serializer, ignoring the
@@ -58,11 +45,29 @@ In `@deepkit/type`:
 10. Nested change detectors were held in builder variables and reused across
     branches, so any self-referencing entity threw "fn is not a function".
 11. Hooks could not transform the value they passed on.
+12. The circular-reference guard pushed but never popped, so a value serialized
+    once was treated as circular everywhere it appeared afterwards.
+13. `keyof` over a union was `never`, so `Partial<A | B>` had no properties.
+14. Loose boolean coercion passed unrecognised values through unchanged.
 
 In `@deepkit/type-compiler`:
-12. When a caller passed fewer type arguments than declared, Ω was sized by the
+15. When a caller passed fewer type arguments than declared, Ω was sized by the
     call site but indexed by the declaration — every MongoDB command serialized
     against `() => any` instead of its message type.
+
+In `@deepkit/bson`:
+16. The unrolled document fast path exits early to a slow path returning just
+    the value, but an extracted deserializer builds at depth 0 while nested and
+    must return `[value, offset]`.
+17. Binary in an untyped position was written as `{}`, losing the data.
+18. A class deserializer looked for `constructor` among a class's own members,
+    so a subclass that declares none lost its base's parameter properties.
+
+Elsewhere: `convertQueryFilter` dropped `{field: undefined}` (soft-delete
+matched every row); SQL filter values were serialized without their position, so
+a binary UUID column was compared against a string; a reference used as a
+primary key returned the raw foreign key; the S3 adapter built keys with a
+leading slash so every listing was empty.
 
 ## Watch out
 
@@ -72,3 +77,6 @@ In `@deepkit/type-compiler`:
   `serializeProperty(value, member.type, serializer, [schema.type, member])`.
 - BSON's hot path is perf-tested. A per-call try/finally or a per-property
   function call is measurable; scope such work to the types that need it.
+- `docker compose up -d` publishes alternative ports (postgres 15432, mysql
+  13306, mongo 27117, …) to avoid clashing with local installs. Tests default
+  to those.
