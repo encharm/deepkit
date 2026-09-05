@@ -24,6 +24,8 @@ setAdapterFactory(async () => {
         secretAccessKey: S3_SECRET_KEY,
         endpoint: S3_ENDPOINT,
         forcePathStyle: true, // Required for MinIO
+        //MinIO does not report object ACLs back, so visibility cannot be verified
+        supportsVisibility: !S3_ENDPOINT.includes('localhost'),
     });
 
     const response = await adapter.client.send(

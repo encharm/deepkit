@@ -24,6 +24,12 @@ export interface FilesystemAwsS3Options extends S3ClientConfigType {
     endpoint?: string;
 
     /**
+     * Whether the service reports object ACLs back on read. MinIO does not, so
+     * set false there: visibility can still be set, but not read again.
+     */
+    supportsVisibility?: boolean;
+
+    /**
      * Use path-style URLs (required for MinIO and some S3-compatible services).
      * When true: http://endpoint/bucket/key
      * When false: http://bucket.endpoint/key
@@ -54,7 +60,11 @@ export class FilesystemAwsS3Adapter implements FilesystemAdapter {
     }
 
     supportsVisibility() {
-        return true;
+        //MinIO and some other S3-compatible services accept an ACL on write but
+        //never report the AllUsers grant back, so visibility cannot be read
+        //again. Opt out there rather than claim support that silently returns
+        //'private' for a public file.
+        return this.options.supportsVisibility !== false;
     }
 
     supportsDirectory() {
@@ -62,8 +72,10 @@ export class FilesystemAwsS3Adapter implements FilesystemAdapter {
     }
 
     protected getRemotePath(path: string) {
+        //S3 keys have no leading slash, but pathNormalize adds one, so the base
+        //is taken from index 1
         path = pathNormalize(path);
-        const base = this.options.path ? pathNormalize(this.options.path).slice(0) + '/' : '';
+        const base = this.options.path ? pathNormalize(this.options.path).slice(1) + '/' : '';
         if (path === '/') return base;
         let remotePath = this.options.path ? base : '';
         remotePath += path === '/' ? '' : path.slice(1);
@@ -77,7 +89,7 @@ export class FilesystemAwsS3Adapter implements FilesystemAdapter {
 
     protected pathMapToVirtual(path: string): string {
         //remove this.options.path from path
-        const base = this.options.path ? pathNormalize(this.options.path).slice(0) + '/' : '';
+        const base = this.options.path ? pathNormalize(this.options.path).slice(1) + '/' : '';
         return path.slice(base.length);
     }
 
