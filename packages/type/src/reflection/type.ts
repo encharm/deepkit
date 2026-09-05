@@ -1754,6 +1754,23 @@ export function stringifyShortResolvedType(type: Type, stateIn: Partial<Stringif
 /**
  * Returns all (including inherited) constructor properties of a class.
  */
+/**
+ * The constructor a class actually uses, which may be inherited.
+ *
+ * A subclass that declares no constructor of its own still runs its base's, so
+ * anything reconstructing an instance has to look up the chain — the same chain
+ * {@link getDeepConstructorProperties} walks.
+ */
+export function getDeepConstructor(type: TypeClass): TypeMethod | undefined {
+    for (const classType of getInheritanceChain(type.classType)) {
+        const resolved = resolveReceiveType(classType) as TypeClass;
+        if (resolved.kind !== ReflectionKind.class) continue;
+        const constructor = findMember('constructor', resolved.types);
+        if (constructor && constructor.kind === ReflectionKind.method) return constructor;
+    }
+    return undefined;
+}
+
 export function getDeepConstructorProperties(type: TypeClass): TypeParameter[] {
     const chain = getInheritanceChain(type.classType);
     const res: TypeParameter[] = [];

@@ -35,6 +35,7 @@ import {
     createReference,
     embeddedAnnotation,
     excludedAnnotation,
+    getDeepConstructor,
     getDeepConstructorProperties,
     hasDefaultValue,
     isMongoIdType,
@@ -764,9 +765,9 @@ function buildShapeJit(
                 if (deepCtorProps.length > 0) {
                     skipFields = new Set(deepCtorProps.map(p => String(p.name)));
 
-                    const ctorMethod = classType.types.find(
-                        (t): t is TypeMethod => t.kind === ReflectionKind.method && t.name === 'constructor',
-                    );
+                    //a subclass without its own constructor still runs its base's,
+                    //so the parameters to fill come from up the chain
+                    const ctorMethod = getDeepConstructor(classType);
 
                     if (ctorMethod && ctorMethod.parameters) {
                         const args: Ref<any>[] = [];
@@ -2646,10 +2647,9 @@ function buildDocumentBody(
         if (deepCtorProps.length > 0) {
             skipProps = new Set(deepCtorProps.map(p => String(p.name)));
 
-            // Find this class's own constructor method to get parameter order
-            const ctorMethod = classType.types.find(
-                (t): t is TypeMethod => t.kind === ReflectionKind.method && t.name === 'constructor',
-            );
+            //a subclass without its own constructor still runs its base's, so the
+            //parameter order comes from up the chain
+            const ctorMethod = getDeepConstructor(classType);
 
             if (ctorMethod && ctorMethod.parameters) {
                 const args: Ref<any>[] = [];
