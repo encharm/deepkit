@@ -2389,7 +2389,11 @@ function buildDocumentBody(
     // caused by the mutable fast-flag pattern (70M → 170M ops/sec for int32x3).
     // The slow-path fallback is in a separate function to keep the main function
     // body small and V8-friendly.
-    const canUnroll = !forceWhileLoop && ctx.depth === 0 && propVars.size > 0 && propVars.size <= 24 && !indexSignature;
+    //the unrolled path exits early to a slow path that returns just the value,
+    //so it is only usable where that is the expected shape. An extracted
+    //deserializer builds at depth 0 but is nested, and must return a tuple.
+    const canUnroll =
+        !forceWhileLoop && topLevel && ctx.depth === 0 && propVars.size > 0 && propVars.size <= 24 && !indexSignature;
 
     if (canUnroll) {
         // ── Pattern E: Delegated fallback + shared _r array ──

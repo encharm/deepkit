@@ -8,7 +8,16 @@
  * You should have received a copy of the MIT License along with this program.
  */
 import { toFastProperties } from '@deepkit/core';
-import { InlineRuntimeType, ReflectionClass, ReflectionKind, TypeUnion, typeOf } from '@deepkit/type';
+import {
+    InlineRuntimeType,
+    ReflectionClass,
+    ReflectionKind,
+    TypeClass,
+    TypeObjectLiteral,
+    TypeUnion,
+    getPartialType,
+    typeOf,
+} from '@deepkit/type';
 
 import { DEEP_SORT } from '../../query.model.js';
 import type { MongoClientConfig } from '../config.js';
@@ -90,14 +99,22 @@ export class FindCommand<T> extends Command<T[]> {
                 const schemas = Array.from(Object.values(singleTableInheritanceMap));
                 const type: TypeUnion = { kind: ReflectionKind.union, types: schemas.map(v => v.type) };
 
+                //`Partial<A | B>` keeps only the keys A and B share, which drops
+                //whatever distinguishes the subclasses. A projection needs each
+                //member made partial on its own, so the union is of Partials.
+                const partialType: TypeUnion = {
+                    kind: ReflectionKind.union,
+                    types: schemas.map(v => getPartialType(v.type as TypeClass | TypeObjectLiteral)),
+                };
+
                 if (this.projection) {
                     interface SpecialisedResponse extends BaseResponse {
                         //an error response carries no cursor; requiring one would
                         //fail to deserialize and hide the server's own message
                         cursor?: {
                             id: bigint;
-                            firstBatch?: Partial<InlineRuntimeType<typeof type>>[];
-                            nextBatch?: Partial<InlineRuntimeType<typeof type>>[];
+                            firstBatch?: InlineRuntimeType<typeof partialType>[];
+                            nextBatch?: InlineRuntimeType<typeof partialType>[];
                         };
                     }
 

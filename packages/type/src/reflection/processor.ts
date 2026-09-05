@@ -1758,7 +1758,34 @@ export class Processor {
 
     private handleKeyOf() {
         const type = this.pop() as Type;
-        if (type.kind === ReflectionKind.objectLiteral || type.kind === ReflectionKind.class) {
+        if (type.kind === ReflectionKind.union) {
+            //keyof a union is the keys every member has, since only those can be
+            //read from a value of that type
+            const perMember = type.types.map(member => {
+                const keys = new Set<string | number | symbol>();
+                if (member.kind === ReflectionKind.objectLiteral || member.kind === ReflectionKind.class) {
+                    for (const m of member.types) {
+                        if ('name' in m && m.name !== 'new' && m.name !== 'constructor') keys.add(m.name);
+                    }
+                }
+                return keys;
+            });
+
+            const shared = perMember.length
+                ? [...perMember[0]].filter(name => perMember.every(keys => keys.has(name)))
+                : [];
+
+            if (!shared.length) {
+                this.push({ kind: ReflectionKind.never });
+                return;
+            }
+
+            const union = { kind: ReflectionKind.union, origin: type, types: [] } as TypeUnion;
+            for (const name of shared) {
+                union.types.push({ kind: ReflectionKind.literal, literal: name, parent: union } as TypeLiteral);
+            }
+            this.push(union);
+        } else if (type.kind === ReflectionKind.objectLiteral || type.kind === ReflectionKind.class) {
             const union = { kind: ReflectionKind.union, origin: type, types: [] } as TypeUnion;
             for (const member of type.types) {
                 if (
