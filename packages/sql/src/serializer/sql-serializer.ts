@@ -19,6 +19,7 @@ import {
     TypeClass,
     TypeObjectLiteral,
     TypeUnion,
+    deserializeClass,
     handleObjectLiteral,
     handleUnion,
     isBackReferenceType,
@@ -189,7 +190,12 @@ const deserializeSqlObjectLiteral: JsonTypeHandler = (type, input, b, state) => 
 
     //the column arrives as a JSON string, so parse it before reading members
     const value = isDirectPropertyOfEntity(state) ? b.call(parseJsonColumn, input) : input;
-    return handleObjectLiteral(type as TypeClass | TypeObjectLiteral, value, b, state);
+    //a class must come back as an instance of itself, which only deserializeClass
+    //does — handleObjectLiteral would produce a plain object
+    if (type.kind === ReflectionKind.class) {
+        return deserializeClass(type, value, b, state);
+    }
+    return handleObjectLiteral(type as TypeObjectLiteral, value, b, state);
 };
 
 const serializeSqlUnion: JsonTypeHandler = (type, input, b, state) => {
@@ -236,6 +242,12 @@ export class SqlSerializer extends Serializer {
             if (!isDirectPropertyOfEntity(state)) return input;
             return b.call(uuid4BinaryStrict, input);
         });
+
+        //annotation handlers run before kind handlers, so the reference decorator
+        //inherited from the base serializer would inline a `& Inline` reference.
+        //A database column always stores the foreign key.
+        this.serializeRegistry.prependDecorator(isReferenceType, serializeReferencedType);
+        this.deserializeRegistry.prependDecorator(isReferenceType, deserializeReferencedType);
 
         this.serializeRegistry.register(ReflectionKind.class, serializeSqlObjectLiteral);
         this.serializeRegistry.register(ReflectionKind.objectLiteral, serializeSqlObjectLiteral);

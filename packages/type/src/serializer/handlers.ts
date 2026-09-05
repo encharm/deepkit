@@ -2497,12 +2497,19 @@ export const handleObjectLiteral: JsonTypeHandler = (type, input, b, state) => {
             };
 
             const result = b.var_<any>(undefined);
-            const stackRef = b.call(checkCircular, input, state.optionsRef.get('_stack' as any), state.optionsRef);
+            //bind the stack once: referencing the call expression again would
+            //re-enter checkCircular and push a second time instead of popping
+            const stackRef = b.let(
+                b.call(checkCircular, input, state.optionsRef.get('_stack' as any), state.optionsRef),
+            );
 
             b.if_(b.neq(stackRef, b.lit(undefined)), () => {
                 const innerResult = buildObjectLiteralBody(objType, members, input, b, state, isDeserialize);
-                b.call(popStack, stackRef);
                 b.setVar(result, innerResult);
+                //b.call alone builds an expression that is never evaluated, so the
+                //stack was never popped and a value serialized once was treated as
+                //circular everywhere it appeared afterwards
+                b.exec(b.call(popStack, stackRef));
             });
 
             return b.getVar(result);
