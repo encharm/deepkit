@@ -9,12 +9,14 @@
  */
 import sift from 'sift';
 
+import { isObject } from '@deepkit/core';
 import {
     Changes,
     HandlerRegistry,
     JsonBuildContext,
     PrimaryKeyFields,
     ReflectionClass,
+    createReference,
     getSerializeFunction,
 } from '@deepkit/type';
 
@@ -72,6 +74,18 @@ export function primaryKeyObjectConverter(
 ): (data: any) => PrimaryKeyFields<any> {
     const primary = classSchema.getPrimary();
     const primaryKeyConverted = getSerializeFunction(primary.property, templateRegistry);
+
+    //a primary key can itself be a reference, in which case the database hands
+    //back the foreign key and the caller expects the reference object
+    if (primary.isReference()) {
+        const foreign = primary.getResolvedReflectionClass();
+        const foreignPk = foreign.getPrimary();
+        return data => {
+            if (data === null || data === undefined) return { [primary.name]: data } as any;
+            const value = isObject(data) ? (data as any)[foreignPk.name] : data;
+            return { [primary.name]: createReference(foreign.getClassType(), { [foreignPk.name]: value }) } as any;
+        };
+    }
 
     return data => {
         return { [primary.name]: primaryKeyConverted(data) };

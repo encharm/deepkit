@@ -37,6 +37,10 @@ export function getSqlFilter<T>(
             //resolvePath returns the property member; serialize its type with the
             //member in the chain, so a handler sees the same position it would
             //when the whole entity is serialized
+            //null and undefined become IS NULL in SQL; there is nothing to
+            //serialize, and an object serializer would dereference them
+            if (value === null || value === undefined) return value;
+
             const resolved = resolvePath(path, classSchema.type);
             const isMember =
                 resolved.kind === ReflectionKind.property || resolved.kind === ReflectionKind.propertySignature;

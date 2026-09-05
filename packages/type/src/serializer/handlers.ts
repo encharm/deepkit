@@ -2338,6 +2338,15 @@ export const guardObjectFast: JsonTypeHandler = (type, input, b, state) => {
 /**
  * Build the type carried by a property, property signature or parameter.
  */
+/** The type a property, property signature or parameter carries. */
+function unwrapMember(type: Type): Type {
+    return type.kind === ReflectionKind.property ||
+        type.kind === ReflectionKind.propertySignature ||
+        type.kind === ReflectionKind.parameter
+        ? (type as TypeProperty | TypePropertySignature | TypeParameter).type
+        : type;
+}
+
 export const handleMember: JsonTypeHandler = (type, input, b, state) => {
     const member = type as TypeProperty | TypePropertySignature | TypeParameter;
 
@@ -3659,6 +3668,7 @@ export function isInlineActive(type: Type, serializerName: string): boolean {
 }
 
 export const serializeReference: JsonTypeHandler = (type, input, b, state) => {
+    type = unwrapMember(type);
     const clazz = ReflectionClass.from(type as TypeClass | TypeObjectLiteral);
     const pkProperty = clazz.getPrimary();
 
@@ -3700,6 +3710,10 @@ export const serializeReference: JsonTypeHandler = (type, input, b, state) => {
  * Deserialize a reference type (FK relationship).
  */
 export const deserializeReference: JsonTypeHandler = (type, input, b, state) => {
+    //the annotation may sit on a property rather than the type it carries, and a
+    //caller can hand the member straight in (a primary key that is itself a
+    //reference), so resolve to the referenced type first
+    type = unwrapMember(type);
     //a reference can be an objectLiteral as well as a class, and only a class
     //carries a classType
     const clazz = ReflectionClass.from(type as TypeClass | TypeObjectLiteral);

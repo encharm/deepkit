@@ -95,6 +95,15 @@ export function isDirectPropertyOfEntity(state: JsonBuildContext): boolean {
     return parentTypes.length === 3;
 }
 
+/** The type a property, property signature or parameter carries. */
+function unwrapMember(type: Type): Type {
+    return type.kind === ReflectionKind.property ||
+        type.kind === ReflectionKind.propertySignature ||
+        type.kind === ReflectionKind.parameter
+        ? (type as any).type
+        : type;
+}
+
 /** Parses a column that the database returns as a JSON string. */
 function parseJsonColumn(value: any): any {
     return 'string' === typeof value ? JSON.parse(value) : value;
@@ -129,13 +138,22 @@ const deserializeSqlArray: JsonTypeHandler = (type, input, b, state) => {
  * A reference is stored as its primary key only, so serialize just that.
  */
 const serializeReferencedType: JsonTypeHandler = (type, input, b, state) => {
+    //the annotation may sit on the property rather than the type it carries
+    type = unwrapMember(type);
     if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return input;
     const primary = ReflectionClass.from(type).getPrimary();
-    //an unhydrated reference carries only the primary key
-    return state.build(primary.getType(), input.get(primary.getName()));
+
+    //an unset or unloaded reference has no primary key to read
+    const result = b.var_<any>(b.lit(undefined));
+    b.if_(b.not(b.isNullish(input)), () => {
+        //an unhydrated reference carries only the primary key
+        b.setVar(result, state.build(primary.getType(), input.get(primary.getName())));
+    });
+    return b.getVar(result);
 };
 
 const deserializeReferencedType: JsonTypeHandler = (type, input, b, state) => {
+    type = unwrapMember(type);
     if (type.kind !== ReflectionKind.class && type.kind !== ReflectionKind.objectLiteral) return input;
     const primary = ReflectionClass.from(type).getPrimary();
     return state.build(primary.getType(), input);
