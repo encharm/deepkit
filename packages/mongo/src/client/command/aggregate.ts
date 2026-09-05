@@ -86,7 +86,9 @@ export class AggregateCommand<T, R = BaseResponse> extends Command<R[]> {
 
             if (this.partial) {
                 interface SpecialisedResponse extends BaseResponse {
-                    cursor: {
+                    //an error response carries no cursor; requiring one would
+                    //fail to deserialize and hide the server's own message
+                    cursor?: {
                         id: number;
                         firstBatch?: Array<Partial<resultSchema>>;
                         nextBatch?: Array<Partial<resultSchema>>;
@@ -96,7 +98,9 @@ export class AggregateCommand<T, R = BaseResponse> extends Command<R[]> {
                 jit.mdbAggregatePartial = specialisedResponse = typeOf<SpecialisedResponse>();
             } else {
                 interface SpecialisedResponse extends BaseResponse {
-                    cursor: {
+                    //an error response carries no cursor; requiring one would
+                    //fail to deserialize and hide the server's own message
+                    cursor?: {
                         id: number;
                         firstBatch?: Array<resultSchema>;
                         nextBatch?: Array<resultSchema>;
@@ -109,11 +113,11 @@ export class AggregateCommand<T, R = BaseResponse> extends Command<R[]> {
         }
 
         interface Response extends BaseResponse {
-            cursor: { id: bigint; firstBatch?: any[]; nextBatch?: any[] };
+            cursor?: { id: bigint; firstBatch?: any[]; nextBatch?: any[] };
         }
 
         const res = await this.sendAndWait<AggregateMessage, Response>(cmd, undefined, specialisedResponse);
-        if (!res.cursor.firstBatch) throw new MongoError('DK-MG001', `No firstBatch received`);
+        if (!res.cursor?.firstBatch) throw new MongoError('DK-MG001', `No firstBatch received`);
 
         const result: R[] = res.cursor.firstBatch;
 
@@ -129,6 +133,7 @@ export class AggregateCommand<T, R = BaseResponse> extends Command<R[]> {
             config.applyReadPreference(host, nextCommand, this.options, transaction);
             const next = await this.sendAndWait<GetMoreMessage, Response>(nextCommand, undefined, specialisedResponse);
 
+            if (!next.cursor) throw new MongoError('DK-MG001', `No cursor received`);
             if (next.cursor.nextBatch) {
                 result.push(...next.cursor.nextBatch);
             }

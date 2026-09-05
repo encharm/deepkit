@@ -92,7 +92,9 @@ export class FindCommand<T> extends Command<T[]> {
 
                 if (this.projection) {
                     interface SpecialisedResponse extends BaseResponse {
-                        cursor: {
+                        //an error response carries no cursor; requiring one would
+                        //fail to deserialize and hide the server's own message
+                        cursor?: {
                             id: bigint;
                             firstBatch?: Partial<InlineRuntimeType<typeof type>>[];
                             nextBatch?: Partial<InlineRuntimeType<typeof type>>[];
@@ -102,7 +104,9 @@ export class FindCommand<T> extends Command<T[]> {
                     jit.mdbFindPartial = specialisedResponse = typeOf<SpecialisedResponse>();
                 } else {
                     interface SpecialisedResponse extends BaseResponse {
-                        cursor: {
+                        //an error response carries no cursor; requiring one would
+                        //fail to deserialize and hide the server's own message
+                        cursor?: {
                             id: bigint;
                             firstBatch?: InlineRuntimeType<typeof type>[];
                             nextBatch?: InlineRuntimeType<typeof type>[];
@@ -117,7 +121,9 @@ export class FindCommand<T> extends Command<T[]> {
 
                 if (this.projection) {
                     interface SpecialisedResponse extends BaseResponse {
-                        cursor: {
+                        //an error response carries no cursor; requiring one would
+                        //fail to deserialize and hide the server's own message
+                        cursor?: {
                             id: bigint;
                             firstBatch?: Partial<resultSchema>[];
                             nextBatch?: Partial<resultSchema>[];
@@ -127,7 +133,9 @@ export class FindCommand<T> extends Command<T[]> {
                     jit.mdbFindPartial = specialisedResponse = typeOf<SpecialisedResponse>();
                 } else {
                     interface SpecialisedResponse extends BaseResponse {
-                        cursor: {
+                        //an error response carries no cursor; requiring one would
+                        //fail to deserialize and hide the server's own message
+                        cursor?: {
                             id: bigint;
                             firstBatch?: resultSchema[];
                             nextBatch?: resultSchema[];
@@ -141,11 +149,11 @@ export class FindCommand<T> extends Command<T[]> {
         }
 
         interface Response extends BaseResponse {
-            cursor: { id: bigint; firstBatch?: any[]; nextBatch?: any[] };
+            cursor?: { id: bigint; firstBatch?: any[]; nextBatch?: any[] };
         }
 
         const res = await this.sendAndWait<FindSchema, Response>(cmd, undefined, specialisedResponse);
-        if (!res.cursor.firstBatch) throw new MongoError('DK-MG001', `No firstBatch received`);
+        if (!res.cursor?.firstBatch) throw new MongoError('DK-MG001', `No firstBatch received`);
 
         const result: T[] = res.cursor.firstBatch;
 
@@ -161,6 +169,7 @@ export class FindCommand<T> extends Command<T[]> {
             config.applyReadPreference(host, nextCommand, this.options, transaction);
             const next = await this.sendAndWait<GetMoreMessage, Response>(nextCommand, undefined, specialisedResponse);
 
+            if (!next.cursor) throw new MongoError('DK-MG001', `No cursor received`);
             if (next.cursor.nextBatch) {
                 result.push(...next.cursor.nextBatch);
             }
