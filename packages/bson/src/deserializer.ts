@@ -365,7 +365,7 @@ function isBsonTypeCompatible(bsonType: number, tf: TypeFieldInfo): boolean {
                 !isReferenceType(type)
             );
         case BSONType.ARRAY:
-            return type.kind === ReflectionKind.array;
+            return type.kind === ReflectionKind.array || type.kind === ReflectionKind.tuple;
         case BSONType.BINARY:
             return isUUIDType(type);
         default:
@@ -384,6 +384,30 @@ function isBsonTypeCompatible(bsonType: number, tf: TypeFieldInfo): boolean {
  * @param classType - If provided, result will be an instance of this class.
  */
 /**
+ * Emit the base deserializer's read for a field the shape JIT has no inline
+ * form of its own for (a tuple, an array of dates, ...). The code lands inside
+ * the shape function, so the surrounding fields keep their inlined reads.
+ *
+ * Before, such a field either kept the shape from being built at all or
+ * compiled to an unconditional BAILOUT that read every preceding field on
+ * every call only to throw the work away.
+ */
+function buildShapeValueReadViaBase(
+    b: Builder,
+    buf: Ref<Uint8Array>,
+    d: Ref<number>,
+    bsonType: number,
+    tf: TypeFieldInfo,
+    outVal: VarRef<any>,
+    outOff: VarRef<number>,
+    ctx: BSONBuildState,
+): void {
+    const o = b.var_<number>(d, 'bo');
+    deserializeValueInto(b, buf, o, b.lit(bsonType), tf.type, outVal, ctx);
+    b.setVar(outOff, b.getVar(o));
+}
+
+/**
  * Emit inlined value reading for a shape field directly into the parent Builder.
  * Writes to outVal/outOff VarRefs instead of a shared tuple.
  * Returns true if the value was handled, false if the type needs BAILOUT.
@@ -399,6 +423,7 @@ function buildShapeValueReadInline(
     nestedHandles: Map<string, NestedShapeHandle>,
     fieldIndex: number,
     BAILOUT: symbol,
+    ctx: BSONBuildState,
 ): void {
     // Union types: unwrap and dispatch based on union structure
     if (tf.type.kind === ReflectionKind.union) {
@@ -419,6 +444,7 @@ function buildShapeValueReadInline(
                 nestedHandles,
                 fieldIndex,
                 BAILOUT,
+                ctx,
             );
             return;
         }
@@ -663,10 +689,11 @@ function buildShapeValueReadInline(
                         },
                     );
                 } else {
-                    b.return_(b.lit(BAILOUT));
+                    buildShapeValueReadViaBase(b, buf, d, bsonType, tf, outVal, outOff, ctx);
                 }
             } else {
-                b.return_(b.lit(BAILOUT));
+                //a tuple, for one — RPC action bodies are { args: [tuple] }
+                buildShapeValueReadViaBase(b, buf, d, bsonType, tf, outVal, outOff, ctx);
             }
             break;
         }
@@ -705,6 +732,8 @@ function buildShapeJit(
     }
 
     const nestedHandles = new Map<string, NestedShapeHandle>();
+    //for fields the shape JIT reads through the base deserializer
+    const ctx = new BSONBuildState();
 
     return fn(
         arg<Uint8Array>('buf'),
@@ -746,7 +775,19 @@ function buildShapeJit(
                 const fv = b.var_<any>(b.lit(undefined), `_f${i}`);
 
                 // Inline value read — writes directly to fv and o
-                buildShapeValueReadInline(b, buf, d, sf.bsonType, tf, fv, o, nestedHandles, i, BAILOUT);
+                buildShapeValueReadInline(
+                    b,
+                    buf,
+                    d,
+                    sf.bsonType,
+                    tf,
+                    fv,
+                    o,
+                    nestedHandles,
+                    i,
+                    BAILOUT,
+                    ctx.forProperty(tf.jsName),
+                );
 
                 fieldVars.set(sf.name, fv);
             }
