@@ -1443,6 +1443,12 @@ function createDeserializer(type: Type): BSONDeserializer<any> {
     // Learned shapes: array of { firstByte, jit }
     // firstByte is the first byte of the first field name (for quick dispatch)
     const learnedShapes: { firstByte: number; jit: (buf: Uint8Array, off: number) => any }[] = [];
+    // firstBytes where buildShapeJit returned null. Without this a shape that
+    // cannot be JITed (a tuple field, say) is re-learned on every call: the
+    // learner never graduates, and learnShape + buildShapeJit run per message
+    // before the slow path does the actual work. RPC action bodies are
+    // { args: [tuple] }, so every RPC call paid for it.
+    const failedFirstBytes = new Set<number>();
 
     // Bailout sentinel - returned by shape JIT when shape doesn't match
     const BAILOUT = Symbol('BAILOUT');
@@ -1458,14 +1464,19 @@ function createDeserializer(type: Type): BSONDeserializer<any> {
 
     // Called when dispatcher can't find matching shape or shape JIT bails out
     function onBailout(buf: Uint8Array, offset: number): any {
-        const shape = learnShape(buf, offset);
         const firstByte = buf[offset + 5];
+
+        // Already tried this firstByte and JIT generation failed — go straight to slow path
+        if (failedFirstBytes.has(firstByte)) {
+            return slowPath(buf, offset);
+        }
 
         const existing = learnedShapes.find(s => s.firstByte === firstByte);
         if (existing) {
             return slowPath(buf, offset);
         }
 
+        const shape = learnShape(buf, offset);
         const topClassType = objType.kind === ReflectionKind.class ? (objType as TypeClass) : undefined;
         const jit = buildShapeJit(shape, typeFields, BAILOUT, false, topClassType);
         if (jit) {
@@ -1476,6 +1487,7 @@ function createDeserializer(type: Type): BSONDeserializer<any> {
             return slowPath(buf, offset);
         }
 
+        failedFirstBytes.add(firstByte);
         return slowPath(buf, offset);
     }
 
