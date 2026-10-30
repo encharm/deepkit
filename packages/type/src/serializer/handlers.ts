@@ -3508,7 +3508,10 @@ export const deserializeClass: JsonTypeHandler = (type, input, b, state) => {
                 b.if_(
                     b.not(b.isNullish(propInput)),
                     () => {
-                        b.setVar(argValue, state.build(property.type, propInput));
+                        //through the property, like any other property: a handler
+                        //that looks at where a value sits (e.g. SQL parsing an
+                        //entity's JSON column) must see a constructor property too
+                        b.setVar(argValue, state.buildMember(property.property, property.type, propInput));
                     },
                     () => {
                         if (isNullable(property.property)) {

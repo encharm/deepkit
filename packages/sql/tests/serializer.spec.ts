@@ -49,3 +49,17 @@ test('object in a union', () => {
     expect(serialize<Person>(unset, undefined, sqlSerializer)).toEqual(unset);
     expect(deserialize<Person>(unset, undefined, sqlSerializer)).toEqual(unset);
 });
+
+test('constructor property stored as JSON', () => {
+    //a constructor property was built without its member, so the JSON column
+    //was not recognised as one and reached the array handler as a string
+    class Page {
+        id: number & PrimaryKey & AutoIncrement = 0;
+
+        constructor(public content: { insert: string }[]) {}
+    }
+
+    const res = serialize<Page>(new Page([{ insert: 'abc' }]), undefined, sqlSerializer);
+    expect(res).toEqual({ id: 0, content: JSON.stringify([{ insert: 'abc' }]) });
+    expect(deserialize<Page>(res, undefined, sqlSerializer).content).toEqual([{ insert: 'abc' }]);
+});
