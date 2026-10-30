@@ -29,3 +29,23 @@ test('array', () => {
     const back = deserialize<Person>(res, undefined, sqlSerializer);
     expect(back).toEqual(runtime);
 });
+
+test('object in a union', () => {
+    //a union member used to be serialized standalone, away from the property it
+    //sits in, so it was never stored as JSON and reached the driver as an object
+    class Person {
+        id: number & PrimaryKey & AutoIncrement = 0;
+        doc: { name: string; tags: string[] } | null = null;
+        shape: { a: string } | { b: number } | 54 = 54;
+    }
+
+    const runtime = { id: 1, doc: { name: 'peter', tags: ['a'] }, shape: { b: 2 } };
+    const res = serialize<Person>(runtime, undefined, sqlSerializer);
+    //the nested array is part of the JSON document, not encoded a second time
+    expect(res).toEqual({ id: 1, doc: JSON.stringify({ name: 'peter', tags: ['a'] }), shape: JSON.stringify({ b: 2 }) });
+    expect(deserialize<Person>(res, undefined, sqlSerializer)).toEqual(runtime);
+
+    const unset = { id: 2, doc: null, shape: 54 };
+    expect(serialize<Person>(unset, undefined, sqlSerializer)).toEqual(unset);
+    expect(deserialize<Person>(unset, undefined, sqlSerializer)).toEqual(unset);
+});

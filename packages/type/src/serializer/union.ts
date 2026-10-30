@@ -581,53 +581,46 @@ function buildScoredUnion(type: TypeUnion, input: Ref, b: Builder, state: JsonBu
                     return score;
                 };
 
+                //each member is built here, through state.build, rather than as a
+                //standalone serializer picked at runtime: a standalone one starts
+                //from an empty context, so handlers that look at where a value
+                //sits (e.g. SQL storing an entity's object property as JSON) and
+                //the caller's options and error path were all lost
+                if (objectMembers.length === 1) {
+                    b.setVar(result, state.build(objectMembers[0], input));
+                    b.setVar(matched, b.lit(true));
+                    return;
+                }
+
                 // Find best matching member at runtime
-                const findBestMember = (
+                const findBestMemberIndex = (
                     inputObj: any,
                     memberTypes: Type[],
                     scoreFn: typeof scoreMember,
-                ): Type | undefined => {
-                    let bestMember: Type | undefined;
+                ): number => {
+                    let bestIndex = 0;
                     let bestScore = -Infinity;
-                    for (const memberType of memberTypes) {
-                        const memberScore = scoreFn(inputObj, memberType as TypeObjectLiteral | TypeClass);
+                    for (let i = 0; i < memberTypes.length; i++) {
+                        const memberScore = scoreFn(inputObj, memberTypes[i] as TypeObjectLiteral | TypeClass);
                         if (memberScore > bestScore) {
                             bestScore = memberScore;
-                            bestMember = memberType;
+                            bestIndex = i;
                         }
                     }
-                    return bestMember;
+                    return bestIndex;
                 };
 
-                // Get the best matching member at runtime and build it
-                const buildBestMember = (
-                    inputObj: any,
-                    memberTypes: Type[],
-                    scoreFn: typeof scoreMember,
-                    st: JsonBuildContext,
-                ): any => {
-                    const bestMember = findBestMember(inputObj, memberTypes, scoreFn);
-                    if (!bestMember) return undefined;
-                    const serializer = (st as any).serializer;
-                    const direction = (st as any).direction;
-                    const fn =
-                        direction === 'serialize'
-                            ? serializer.buildSerializer(bestMember)
-                            : serializer.buildDeserializer(bestMember);
-                    return fn(inputObj, {});
-                };
-
-                const builtResult = b.call(
-                    buildBestMember,
-                    input,
-                    b.lit(objectMembers),
-                    b.lit(scoreMember),
-                    b.lit(state),
+                const bestIndex = b.call(findBestMemberIndex, input, b.lit(objectMembers), b.lit(scoreMember));
+                b.switch_(
+                    bestIndex,
+                    objectMembers.map((member, i): [any, () => void] => [
+                        i,
+                        () => {
+                            b.setVar(result, state.build(member, input));
+                            b.setVar(matched, b.lit(true));
+                        },
+                    ]),
                 );
-                b.if_(b.neq(builtResult, b.lit(undefined)), () => {
-                    b.setVar(result, builtResult);
-                    b.setVar(matched, b.lit(true));
-                });
             });
         });
     }
