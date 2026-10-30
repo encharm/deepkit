@@ -59,13 +59,13 @@ import { SQLitePlatform } from './sqlite-platform.js';
  * Converts a specific database error to a more specific error, if possible.
  */
 function handleSpecificError(session: DatabaseSession, error: Error): Error {
+    //walk the chain by shape, not `instanceof Error`: a driver error can come from
+    //another realm, and a cause that is no Error at all must still end the loop.
+    //Bounded, so a cyclic chain cannot spin forever either.
     let cause: any = error;
-    while (cause) {
-        if (cause instanceof Error) {
-            if (cause.message.includes('UNIQUE constraint failed')) {
-                return new UniqueConstraintFailure(`${cause.message}`, { cause: error });
-            }
-            cause = cause.cause;
+    for (let depth = 0; cause && depth < 32; depth++, cause = cause.cause) {
+        if ('string' === typeof cause.message && cause.message.includes('UNIQUE constraint failed')) {
+            return new UniqueConstraintFailure(`${cause.message}`, { cause: error });
         }
     }
 

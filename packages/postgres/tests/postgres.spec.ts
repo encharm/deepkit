@@ -238,6 +238,27 @@ test('unique constraint 1', async () => {
     }
 });
 
+test('unique constraint detection survives a cause that is not an Error', async () => {
+    //a driver can throw from another realm, where `instanceof Error` fails, and a
+    //cause can be anything at all. Either used to spin the cause walk forever.
+    const database = await databaseFactory([]);
+    const persistence = database.adapter.createPersistence(database.createSession());
+
+    const plain = Object.assign(new Error('Could not insert'), { cause: 'not an error' });
+    expect(persistence.handleSpecificError(plain)).toBe(plain);
+
+    const foreign = Object.assign(new Error('Could not insert'), {
+        cause: {
+            message: 'duplicate key value violates unique constraint',
+            table: 'model',
+            detail: 'Key (username)=(peter) already exists.',
+        },
+    });
+    expect(persistence.handleSpecificError(foreign)).toBeInstanceOf(UniqueConstraintFailure);
+
+    await database.disconnect();
+});
+
 test('database field name with filter', async () => {
     class User {
         constructor(public id: UUID & PrimaryKey & DatabaseField<{ name: 'uuid' }>) {}

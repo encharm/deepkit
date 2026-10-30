@@ -60,15 +60,15 @@ import { MySQLPlatform } from './mysql-platform.js';
  * Converts a specific database error to a more specific error, if possible.
  */
 function handleSpecificError(session: DatabaseSession, error: Error): Error {
+    //walk the chain by shape, not `instanceof Error`: a driver error can come from
+    //another realm, and a cause that is no Error at all must still end the loop.
+    //Bounded, so a cyclic chain cannot spin forever either.
     let cause: any = error;
-    while (cause) {
-        if (cause instanceof Error) {
-            if (cause.message.includes('Duplicate entry ')) {
-                // Some database drivers contain the SQL, some not. We try to exclude the SQL from the message.
-                // Cause is attached to the error, so we don't lose information.
-                return new UniqueConstraintFailure(`${cause.message.split('\n')[0]}`, { cause: error });
-            }
-            cause = cause.cause;
+    for (let depth = 0; cause && depth < 32; depth++, cause = cause.cause) {
+        if ('string' === typeof cause.message && cause.message.includes('Duplicate entry ')) {
+            // Some database drivers contain the SQL, some not. We try to exclude the SQL from the message.
+            // Cause is attached to the error, so we don't lose information.
+            return new UniqueConstraintFailure(`${cause.message.split('\n')[0]}`, { cause: error });
         }
     }
 
