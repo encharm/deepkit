@@ -10,6 +10,7 @@ import { MongoClient } from '../../src/client/client.js';
 import { IsMasterCommand } from '../../src/client/command/ismaster.js';
 import { MongoConnectionError } from '../../src/client/error.js';
 import { ConnectionOptions } from '../../src/client/options.js';
+import { mongoHost, mongoPort, mongoUrl } from '../utils.js';
 
 jest.setTimeout(60000);
 
@@ -52,8 +53,8 @@ test('connect valid', async () => {
 
 test('test localhost', async () => {
     const socket = createConnection({
-        host: '127.0.0.1',
-        port: 27017,
+        host: mongoHost,
+        port: mongoPort,
     });
 
     await new Promise(async (resolve, reject) => {
@@ -74,14 +75,14 @@ test('custom command', async () => {
 
     const command = createCommand<Message, { ismaster: boolean }>({ isMaster: 1, $db: 'deepkit' });
 
-    const client = new MongoClient('mongodb://127.0.0.1/');
+    const client = new MongoClient(`${mongoUrl}/`);
     const res = await client.execute(command);
     expect(res).toEqual({ ismaster: true, ok: 1 });
     client.close();
 });
 
 test('connect handshake', async () => {
-    const client = new MongoClient('mongodb://127.0.0.1/');
+    const client = new MongoClient(`${mongoUrl}/`);
     await client.connect();
 
     const type = client.config.hosts[0].getType();
@@ -92,7 +93,7 @@ test('connect handshake', async () => {
 });
 
 test('connect isMaster command', async () => {
-    const client = new MongoClient('mongodb://127.0.0.1/');
+    const client = new MongoClient(`${mongoUrl}/`);
     const response = await client.execute(new IsMasterCommand());
     expect(response.ismaster).toBe(1);
     client.close();
@@ -161,7 +162,7 @@ test('connect isMaster command', async () => {
 // });
 
 test('connection pool 1', async () => {
-    const client = new MongoClient('mongodb://127.0.0.1?maxPoolSize=1');
+    const client = new MongoClient(`${mongoUrl}?maxPoolSize=1`);
 
     //spawn 10 promises, each requesting a connection and releasing it a few ms later
     const promises: Promise<any>[] = [];
@@ -186,7 +187,7 @@ test('connection pool 1', async () => {
 });
 
 test('connection pool stress test', async () => {
-    const client = new MongoClient('mongodb://127.0.0.1?maxPoolSize=2');
+    const client = new MongoClient(`${mongoUrl}?maxPoolSize=2`);
 
     //spawn many promises, each requesting a connection and releasing it a few ms later
     const promises: Promise<any>[] = [];
@@ -215,7 +216,7 @@ test('connection pool stress test', async () => {
 });
 
 test('connection pool 10', async () => {
-    const client = new MongoClient('mongodb://127.0.0.1?maxPoolSize=10');
+    const client = new MongoClient(`${mongoUrl}?maxPoolSize=10`);
 
     {
         const c1 = await client.pool.getConnection();
