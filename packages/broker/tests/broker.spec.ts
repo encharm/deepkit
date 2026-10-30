@@ -123,12 +123,14 @@ describe('cache', () => {
         const cache = new BrokerCache(factory());
 
         let build = 0;
+        //the ttl is wall-clock, so it needs headroom: on a busy machine the gap
+        //between the first and second get alone can exceed a short ttl
         const item = cache.item<number>(
             key,
             async () => {
                 return build++;
             },
-            { ttl: '100ms' },
+            { ttl: '1s' },
         );
 
         expect(await item.exists()).toBe(false);
@@ -142,7 +144,7 @@ describe('cache', () => {
         const entry2 = await item.get();
         expect(entry2).toBe(0);
 
-        await sleep(0.105);
+        await sleep(1.05);
 
         expect(await item.exists()).toBe(false);
         const entry3 = await item.get();
