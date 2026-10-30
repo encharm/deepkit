@@ -5,9 +5,9 @@ import { setAdapterFactory } from '@deepkit/filesystem/test';
 import { FilesystemFtpAdapter } from '../src/ftp-adapter.js';
 
 // Configure via environment variables or use defaults for docker compose
-// docker compose up -d  (uses port 10021)
+// docker compose up -d  (uses port 12021)
 const FTP_HOST = process.env.FTP_HOST || 'localhost';
-const FTP_PORT = parseInt(process.env.FTP_PORT || '10021', 10);
+const FTP_PORT = parseInt(process.env.FTP_PORT || '12021', 10);
 const FTP_USER = process.env.FTP_USER || 'user';
 const FTP_ROOT = process.env.FTP_ROOT || '/ftp/user';
 const FTP_PASSWORD = process.env.FTP_PASSWORD || '123';

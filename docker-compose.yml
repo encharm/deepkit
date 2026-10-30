@@ -9,8 +9,8 @@
 #   export MYSQL_PORT=13306
 #   export MONGO_PORT=27117
 #   export REDIS_PORT=16379
-#   export SFTP_PORT=10022
-#   export FTP_PORT=10021
+#   export SFTP_PORT=12022
+#   export FTP_PORT=12021
 #   export MINIO_PORT=10900
 #   export GCS_PORT=10443
 
@@ -86,8 +86,9 @@ services:
   sftp:
     image: atmoz/sftp:alpine
     platform: linux/amd64
+    # 12xxx rather than 10xxx: dev servers commonly hand out ports in 10000-10110
     ports:
-      - '10022:22'
+      - '12022:22'
     command: user:123:::upload
 
   # FTP for packages/filesystem-ftp tests
@@ -96,14 +97,14 @@ services:
     # only and its vsftpd binary crashes under emulation on Apple silicon
     image: delfer/alpine-ftp-server
     ports:
-      - '10021:21'
-      - '10100-10109:10100-10109'
+      - '12021:21'
+      - '12100-12109:12100-12109'
     environment:
       #the third field is the user's home; the image chroots to it
       USERS: 'user|123|/ftp/user'
       ADDRESS: localhost
-      MIN_PORT: 10100
-      MAX_PORT: 10109
+      MIN_PORT: 12100
+      MAX_PORT: 12109
 
   # MinIO (S3-compatible) for packages/filesystem-aws-s3 tests
   minio:

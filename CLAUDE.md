@@ -326,8 +326,8 @@ Services started (alternative ports to avoid conflicts):
 
 **Filesystem adapters:**
 
-- **SFTP** (port 10022): user `user`, password `123`
-- **FTP** (port 10021): user `user`, password `123`
+- **SFTP** (port 12022): user `user`, password `123`
+- **FTP** (port 12021): user `user`, password `123`
 - **MinIO/S3** (port 10900): user `minioadmin`, password `minioadmin`, bucket `deepkit-test`
 - **Fake GCS** (port 10443): Google Cloud Storage emulator
 

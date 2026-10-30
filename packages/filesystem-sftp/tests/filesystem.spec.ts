@@ -5,9 +5,9 @@ import { setAdapterFactory } from '@deepkit/filesystem/test';
 import { FilesystemSftpAdapter } from '../src/sftp-adapter.js';
 
 // Configure via environment variables or use defaults for docker compose
-// docker compose up -d  (uses port 10022)
+// docker compose up -d  (uses port 12022)
 const SFTP_HOST = process.env.SFTP_HOST || 'localhost';
-const SFTP_PORT = parseInt(process.env.SFTP_PORT || '10022', 10);
+const SFTP_PORT = parseInt(process.env.SFTP_PORT || '12022', 10);
 const SFTP_USER = process.env.SFTP_USER || 'user';
 const SFTP_PASSWORD = process.env.SFTP_PASSWORD || '123';
 const SFTP_ROOT = process.env.SFTP_ROOT || 'upload';
