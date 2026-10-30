@@ -9,14 +9,6 @@
  */
 
 /** @reflection never */
-import { performance } from 'perf_hooks';
-
-/**
- * Cached performance.timeOrigin — constant for the lifetime of the process.
- * Used by no-arg constructor: Math.floor(performanceTimeOrigin + performance.now())
- * gives epoch milliseconds ~2x faster than Date.now().
- */
-const performanceTimeOrigin: number = performance.timeOrigin;
 
 /**
  * A high-performance replacement for Date that defers real Date object creation
@@ -39,7 +31,10 @@ export class FastDate {
     constructor();
     constructor(ms: number);
     constructor(ms?: number) {
-        this._ms = ms !== undefined ? ms : Math.floor(performanceTimeOrigin + performance.now());
+        //the wall clock, like `new Date()`: performance.timeOrigin + now() runs on
+        //the monotonic clock, which drifts from it (NTP corrections, and on macOS
+        //it stops while the machine sleeps)
+        this._ms = ms !== undefined ? ms : Date.now();
     }
 
     private _get(): Date {
