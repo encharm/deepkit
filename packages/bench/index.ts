@@ -35,6 +35,12 @@ const AsyncFunction = (async () => {}).constructor as { new (...args: string[]):
 export interface BenchResult {
     /** Operations per second */
     hz: number;
+    /**
+     * Operations per second at the fastest decile of samples. Machine load only
+     * ever slows a sample down, so unlike the mean this barely moves on a busy
+     * machine — use it for assertions that must hold wherever they run.
+     */
+    hzPeak: number;
     /** Total elapsed time in seconds */
     elapsed: number;
     /** Relative margin of error (as percentage) */
@@ -249,6 +255,32 @@ function mean(arr: number[]): number {
 
 function variance(arr: number[], m: number): number {
     return arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length;
+}
+
+/**
+ * Time per operation at the fastest decile, in ms.
+ *
+ * Ranks windows of consecutive samples at least 5ms long rather than single
+ * samples: a single batch of a fast function can finish within the timer's
+ * resolution and measure 0ms.
+ */
+function fastestDecile(samples: number[], opsPerSample: number): number {
+    const windows: number[] = [];
+    let sum = 0;
+    let count = 0;
+    for (const sample of samples) {
+        sum += sample;
+        count++;
+        if (sum * opsPerSample >= 5) {
+            windows.push(sum / count);
+            sum = 0;
+            count = 0;
+        }
+    }
+    //a run shorter than one window still gets a figure
+    if (windows.length === 0) windows.push(sum / count);
+    windows.sort((a, b) => a - b);
+    return windows[Math.floor(windows.length * 0.1)];
 }
 
 const callGc = typeof global !== 'undefined' && global.gc ? global.gc : () => undefined;
@@ -574,9 +606,11 @@ export class BenchSuite {
         const varr = variance(samples, avg);
         const rme = (Math.sqrt(varr) / avg) * 100;
         const hz = 1000 / avg;
+        const hzPeak = 1000 / fastestDecile(samples, iterations / samples.length);
 
         return {
             hz,
+            hzPeak,
             elapsed,
             rme: isFinite(rme) ? rme : 0,
             mean: avg,

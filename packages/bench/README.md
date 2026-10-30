@@ -128,6 +128,7 @@ await warmupAsync(myAsyncFunction, 50);
 ```typescript
 interface BenchResult {
   hz: number; // Operations per second
+  hzPeak: number; // Ops/sec at the fastest decile of samples; stable under machine load
   elapsed: number; // Total elapsed time in seconds
   rme: number; // Relative margin of error (percentage)
   mean: number; // Mean time per operation in milliseconds
