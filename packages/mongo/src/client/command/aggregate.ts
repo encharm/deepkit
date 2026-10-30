@@ -89,7 +89,7 @@ export class AggregateCommand<T, R = BaseResponse> extends Command<R[]> {
                     //an error response carries no cursor; requiring one would
                     //fail to deserialize and hide the server's own message
                     cursor?: {
-                        id: number;
+                        id: bigint;
                         firstBatch?: Array<Partial<resultSchema>>;
                         nextBatch?: Array<Partial<resultSchema>>;
                     };
@@ -101,7 +101,7 @@ export class AggregateCommand<T, R = BaseResponse> extends Command<R[]> {
                     //an error response carries no cursor; requiring one would
                     //fail to deserialize and hide the server's own message
                     cursor?: {
-                        id: number;
+                        id: bigint;
                         firstBatch?: Array<resultSchema>;
                         nextBatch?: Array<resultSchema>;
                     };
