@@ -7,6 +7,8 @@
  *
  * Thresholds are conservative minimums (deepkit/bson-js ratio).
  * Typical ratios are 2-5x higher than these floors.
+ * Ratios compare `hzPeak`, not the mean, so they hold on a machine that is busy
+ * with other work: load inflates the mean of whichever side it happens to hit.
  *
  * Run standalone: node --import @deepkit/run --test tests/deserialize/perf-regression.spec.ts
  */
@@ -46,7 +48,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('int32 (1 field)', results['deepkit'].hz, results['bson-js'].hz, 10);
+            assertRatio('int32 (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 10);
         });
 
         test('float64', () => {
@@ -61,7 +63,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('float64 (1 field)', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('float64 (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
 
         test('plain number (runtime check)', () => {
@@ -76,7 +78,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('number (1 field)', results['deepkit'].hz, results['bson-js'].hz, 1);
+            assertRatio('number (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 1);
         });
 
         test('string (short)', () => {
@@ -91,7 +93,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('string short (1 field)', results['deepkit'].hz, results['bson-js'].hz, 2);
+            assertRatio('string short (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 2);
         });
 
         test('boolean', () => {
@@ -106,7 +108,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('boolean (1 field)', results['deepkit'].hz, results['bson-js'].hz, 1.5);
+            assertRatio('boolean (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 1.5);
         });
 
         test('Date', () => {
@@ -121,7 +123,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('Date (1 field)', results['deepkit'].hz, results['bson-js'].hz, 5);
+            assertRatio('Date (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 5);
         });
 
         test('MongoId', () => {
@@ -136,7 +138,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('MongoId (1 field)', results['deepkit'].hz, results['bson-js'].hz, 2);
+            assertRatio('MongoId (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 2);
         });
 
         test('UUID', () => {
@@ -151,7 +153,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('UUID (1 field)', results['deepkit'].hz, results['bson-js'].hz, 1.5);
+            assertRatio('UUID (1 field)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 1.5);
         });
     });
 
@@ -170,7 +172,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('int32 x3', results['deepkit'].hz, results['bson-js'].hz, 5);
+            assertRatio('int32 x3', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 5);
         });
 
         test('number x3 (runtime check)', () => {
@@ -187,7 +189,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('number x3 (runtime)', results['deepkit'].hz, results['bson-js'].hz, 5);
+            assertRatio('number x3 (runtime)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 5);
         });
 
         test('mixed no-string (3 fields)', () => {
@@ -204,7 +206,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('mixed no-string x3', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('mixed no-string x3', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
     });
 
@@ -236,7 +238,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('user profile (6 fields)', results['deepkit'].hz, results['bson-js'].hz, 2);
+            assertRatio('user profile (6 fields)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 2);
         });
 
         test('sensor reading (4 fields, all numeric)', () => {
@@ -259,7 +261,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('sensor (4 numeric)', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('sensor (4 numeric)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
 
         test('API response metadata (3 fields, strings)', () => {
@@ -280,7 +282,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('API meta (3 strings)', results['deepkit'].hz, results['bson-js'].hz, 1.5);
+            assertRatio('API meta (3 strings)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 1.5);
         });
 
         test('minimal document (_id only)', () => {
@@ -295,7 +297,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(buf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('minimal (_id only)', results['deepkit'].hz, results['bson-js'].hz, 2);
+            assertRatio('minimal (_id only)', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 2);
         });
     });
 
@@ -315,8 +317,8 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bufNum));
             const results = suite.run({ verbose: false });
 
-            assertRatio('nullable num', results['deepkit num'].hz, results['bson-js'].hz, 1);
-            assertRatio('nullable null', results['deepkit null'].hz, results['bson-js'].hz, 1);
+            assertRatio('nullable num', results['deepkit num'].hzPeak, results['bson-js'].hzPeak, 1);
+            assertRatio('nullable null', results['deepkit null'].hzPeak, results['bson-js'].hzPeak, 1);
         });
 
         test('overlapping nested union — { a } | { a, b }', () => {
@@ -335,8 +337,8 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bufWide));
             const results = suite.run({ verbose: false });
 
-            assertRatio('overlap narrow', results['deepkit narrow'].hz, results['bson-js'].hz, 1);
-            assertRatio('overlap wide', results['deepkit wide'].hz, results['bson-js'].hz, 1);
+            assertRatio('overlap narrow', results['deepkit narrow'].hzPeak, results['bson-js'].hzPeak, 1);
+            assertRatio('overlap wide', results['deepkit wide'].hzPeak, results['bson-js'].hzPeak, 1);
         });
 
         test('discriminated nested union', () => {
@@ -355,8 +357,8 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bufA));
             const results = suite.run({ verbose: false });
 
-            assertRatio('disc union A', results['deepkit A'].hz, results['bson-js'].hz, 1);
-            assertRatio('disc union B', results['deepkit B'].hz, results['bson-js'].hz, 1);
+            assertRatio('disc union A', results['deepkit A'].hzPeak, results['bson-js'].hzPeak, 1);
+            assertRatio('disc union B', results['deepkit B'].hzPeak, results['bson-js'].hzPeak, 1);
         });
 
         test('3-member discriminated union', () => {
@@ -375,8 +377,8 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bufCircle));
             const results = suite.run({ verbose: false });
 
-            assertRatio('3-disc circle', results['deepkit circle'].hz, results['bson-js'].hz, 1);
-            assertRatio('3-disc square', results['deepkit square'].hz, results['bson-js'].hz, 1);
+            assertRatio('3-disc circle', results['deepkit circle'].hzPeak, results['bson-js'].hzPeak, 1);
+            assertRatio('3-disc square', results['deepkit square'].hzPeak, results['bson-js'].hzPeak, 1);
         });
     });
 
@@ -404,7 +406,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('sensor[] 10 cursor', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('sensor[] 10 cursor', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
 
         test('sensor array (1000 items, all numeric, cursor response)', () => {
@@ -430,7 +432,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('sensor[] 1000 cursor', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('sensor[] 1000 cursor', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
 
         test('mixed items with string[] (10 items, cursor response)', () => {
@@ -457,7 +459,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('mixed[] 10 cursor', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('mixed[] 10 cursor', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
 
         test('mixed items with string[] (1000 items, cursor response)', () => {
@@ -484,7 +486,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('mixed[] 1000 cursor', results['deepkit'].hz, results['bson-js'].hz, 3);
+            assertRatio('mixed[] 1000 cursor', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 3);
         });
 
         test('string array (100 items)', () => {
@@ -502,7 +504,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('string[] 100', results['deepkit'].hz, results['bson-js'].hz, 1.5);
+            assertRatio('string[] 100', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 1.5);
         });
 
         test('number array (100 items)', () => {
@@ -520,7 +522,7 @@ describe('Deserialization Performance Regression', () => {
             suite.add('bson-js', () => bson.deserialize(bsonJsBuf));
             const results = suite.run({ verbose: false });
 
-            assertRatio('number[] 100', results['deepkit'].hz, results['bson-js'].hz, 1.5);
+            assertRatio('number[] 100', results['deepkit'].hzPeak, results['bson-js'].hzPeak, 1.5);
         });
     });
 });
